@@ -1,0 +1,445 @@
+:root {
+  color-scheme: light;
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  --design-navy: #1e3a8a;
+  --design-blue: #3b82f6;
+  --design-paper: #f4f6fb;
+  --design-gold: #f5c542;
+  --design-shadow: #c7c9de;
+}
+
+.hide-badge .state-badge, .hide-speech .speech { display: none; }
+.provider-custom .state-badge { background: linear-gradient(135deg, #187c84, #486cbd); }
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.pet {
+  position: relative;
+  width: 300px;
+  height: 342px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+  contain: strict;
+}
+
+.pet:active {
+  cursor: grabbing;
+}
+
+/* Stable transparent drawing surface. Never resize/rebase it per drag: Windows
+   can retain stale composited pixels during rapid transparent-window resizing. */
+.drag-room .pet {
+  position: absolute;
+  left: 130px;
+  top: 170px;
+  overflow: visible;
+  contain: layout style;
+}
+
+.stage {
+  position: absolute;
+  inset: 52px 12px 12px;
+  display: grid;
+  place-items: end center;
+  transform-origin: 50% 88%;
+  will-change: transform;
+}
+
+.motion-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 88%;
+  will-change: transform;
+}
+
+.operation-effect {
+  position: absolute;
+  z-index: 4;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wifi-effect {
+  top: 22px;
+  right: 43px;
+  width: 46px;
+  height: 46px;
+  padding: 5px;
+  color: #54c8ff;
+  background: rgba(244, 250, 255, 0.9);
+  border: 2px solid rgba(84, 200, 255, 0.68);
+  border-radius: 50%;
+  filter: drop-shadow(0 3px 5px rgba(26, 72, 150, 0.2));
+}
+
+.wifi-effect svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  fill-opacity: 1;
+}
+
+.wifi-effect path {
+  fill: none;
+}
+
+.thought-effect {
+  top: 32px;
+  right: 48px;
+  width: 58px;
+  height: 38px;
+}
+
+.thought-effect span {
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  background: rgba(240, 247, 255, 0.96);
+  border: 2px solid rgba(76, 117, 222, 0.72);
+  border-radius: 50%;
+  box-shadow: 0 2px 5px rgba(22, 53, 124, 0.16);
+}
+
+.thought-effect span:nth-child(1) { left: 3px; }
+.thought-effect span:nth-child(2) { left: 21px; bottom: 10px; width: 13px; height: 13px; }
+.thought-effect span:nth-child(3) { left: 42px; bottom: 21px; width: 16px; height: 16px; }
+
+.state-connecting .wifi-effect {
+  opacity: 1;
+  animation: wifi-pulse 1.55s ease-in-out infinite;
+}
+
+.state-thinking .thought-effect {
+  opacity: 1;
+}
+
+.state-thinking .thought-effect span {
+  animation: thought-pop 1.8s ease-in-out infinite;
+}
+
+.state-thinking .thought-effect span:nth-child(2) { animation-delay: 150ms; }
+.state-thinking .thought-effect span:nth-child(3) { animation-delay: 300ms; }
+
+.character-layer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 275px;
+  height: 275px;
+  margin: auto;
+  object-fit: contain;
+  object-position: center bottom;
+  opacity: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 2px rgba(12, 24, 58, 0.16));
+  transform: translateY(var(--frame-y, 0px)) scale(var(--frame-scale, 1));
+  transform-origin: 50% 100%;
+  transition: none;
+  will-change: opacity;
+}
+
+.character-layer.is-visible {
+  z-index: 2;
+  opacity: 1;
+}
+
+.idle-life {
+  position: absolute;
+  width: 275px;
+  height: 275px;
+  left: 0; right: 0; bottom: 0;
+  margin: auto;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 2px rgba(12, 24, 58, 0.16));
+}
+.idle-life[hidden] { display: none; }
+.has-idle-life .character-layer { visibility: hidden; }
+
+.stage.instant-swap .character-layer {
+  transition: none !important;
+}
+
+.pet.is-dragging .stage {
+  animation: none !important;
+  transform: rotate(var(--drag-angle, 0deg));
+  transform-origin: 50% 58px;
+  transition: none;
+}
+
+/* Pose transitions are compositor-driven.  The bitmap swaps only once at the
+   squash point, so anatomy never flickers between inconsistent drawings. */
+.pet.is-transitioning:not(.is-dragging) .stage {
+  animation: none !important;
+}
+
+.pet.is-dragging .state-badge {
+  background: rgba(59, 130, 246, 0.94);
+}
+
+.pet.is-dragging .operation-effect { display: none; }
+
+.speech {
+  position: absolute;
+  z-index: 3;
+  top: 7px;
+  left: 50%;
+  max-width: 262px;
+  padding: 7px 12px;
+  overflow: hidden;
+  color: var(--design-navy);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(244, 246, 251, 0.96);
+  border: 2px solid rgba(59, 130, 246, 0.46);
+  border-radius: 18px;
+  box-shadow: 0 4px 14px rgba(29, 74, 164, 0.16);
+  transform: translateX(-50%);
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.speech.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(-6px) scale(0.97);
+  animation: none !important;
+}
+
+.speech::after {
+  content: "";
+  position: absolute;
+  bottom: -7px;
+  left: calc(50% - 6px);
+  width: 11px;
+  height: 11px;
+  background: var(--design-paper);
+  border-right: 2px solid rgba(59, 130, 246, 0.46);
+  border-bottom: 2px solid rgba(59, 130, 246, 0.46);
+  transform: rotate(45deg);
+}
+
+.state-badge {
+  position: absolute;
+  z-index: 4;
+  right: 18px;
+  bottom: 12px;
+  min-width: 54px;
+  padding: 6px 11px;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(30, 58, 138, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  box-shadow: 0 3px 9px rgba(17, 41, 98, 0.22);
+  pointer-events: none;
+}
+
+.provider-chatgpt .state-badge {
+  background: linear-gradient(135deg, rgba(109, 76, 255, 0.96), rgba(59, 130, 246, 0.96));
+  box-shadow: 0 3px 11px rgba(91, 75, 210, 0.3);
+}
+
+.provider-chatgpt .speech {
+  border-color: rgba(120, 92, 255, 0.5);
+  box-shadow: 0 4px 14px rgba(91, 75, 210, 0.18);
+}
+
+.provider-deepseek .state-badge {
+  background: linear-gradient(135deg, rgba(30, 58, 138, 0.96), rgba(29, 116, 208, 0.96));
+}
+
+.provider-deepseek .speech {
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.state-idle .stage {
+  animation: breathe 3.6s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+}
+
+.state-connecting .stage {
+  animation: connecting-listen 2.1s ease-in-out infinite;
+}
+
+.state-thinking .stage {
+  animation: thinking-bob 2.7s ease-in-out infinite;
+}
+
+.state-reading .stage {
+  animation: reading-bob 2.2s ease-in-out infinite;
+}
+
+.state-working .stage {
+  animation: working-eager 1.65s ease-in-out infinite;
+}
+
+.state-tool_use .stage {
+  animation: tool-ready 1.8s ease-in-out infinite;
+}
+
+.state-testing .stage {
+  animation: testing-peek 2.15s ease-in-out infinite;
+}
+
+.state-generating .stage {
+  animation: generating-sparkle 1.65s ease-in-out infinite;
+}
+
+.state-searching .stage {
+  animation: searching-bob 1.8s ease-in-out infinite;
+}
+
+.state-needs_input .stage {
+  animation: waiting-bob 2.4s ease-in-out infinite;
+}
+
+.state-ready .stage {
+  animation: happy-float 1.9s ease-in-out infinite;
+}
+
+.state-needs_input .speech,
+.state-ready .speech {
+  animation: attention 1.3s ease-in-out infinite;
+}
+
+.state-blocked .stage {
+  animation: worried 0.34s ease-in-out 3;
+}
+
+.state-blocked .state-badge {
+  background: rgba(196, 55, 55, 0.9);
+}
+
+.state-ready .state-badge {
+  background: rgba(16, 145, 91, 0.9);
+}
+
+@keyframes breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2.4px); }
+}
+
+@keyframes wifi-pulse {
+  0%, 100% { opacity: 0.72; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+@keyframes thought-pop {
+  0%, 100% { opacity: 0.48; transform: translateY(2px) scale(0.86); }
+  45% { opacity: 1; transform: translateY(-2px) scale(1.05); }
+}
+
+@keyframes connecting-listen {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-2px) rotate(-0.35deg); }
+}
+
+@keyframes thinking-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes tool-ready {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-3px) rotate(-0.4deg); }
+}
+
+@keyframes testing-peek {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes generating-sparkle {
+  0%, 100% { transform: translateY(0); filter: brightness(1); }
+  50% { transform: translateY(-4px); filter: brightness(1.035); }
+}
+
+@keyframes attention {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
+}
+
+@keyframes reading-bob {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-2px) scale(1, 1); }
+}
+
+@keyframes working-eager {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-3px) scale(1, 1); }
+}
+
+@keyframes searching-bob {
+  0%, 100% { transform: translateY(1px) scale(1, 1); }
+  50% { transform: translateY(-2px) scale(1, 1); }
+}
+
+@keyframes waiting-bob {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-2px) scale(1, 1); }
+}
+
+@keyframes happy-float {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-3px) scale(1, 1); }
+}
+
+@keyframes worried {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(4px); }
+}
+
+/* At small sizes, fractional whole-sprite bob/rotation continually resamples
+   one-pixel lines. Keep ambient poses anchored; dragging and one-off pose
+   transitions still work, as do blinking and operation indicators. */
+.compact-pet .pet:not(.is-dragging) .stage {
+  animation: none !important;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet.is-dragging .stage { animation: none !important; transform: none; }
+  .stage,
+  .motion-layer,
+  .character-layer,
+  .speech {
+    animation: none !important;
+  }
+
+  .operation-effect,
+  .operation-effect span {
+    animation: none !important;
+  }
+}

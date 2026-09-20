@@ -1,0 +1,12 @@
+node_modules/
+runtime/
+output/
+backups/
+work/*
+!work/.gitkeep
+*.zip
+*.log
+.env
+.env.*
+auth.json
+.DS_Store

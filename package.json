@@ -1,0 +1,42 @@
+{
+  "name": "whalepet-desktop",
+  "productName": "WhalePet Desktop",
+  "version": "0.15.1",
+  "private": true,
+  "description": "Standalone Windows desktop pet with local work-state frame animation",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check pet.js && node --check idle-life.js && node --check drag-physics.js && node --check state-schema.js && node --check set-whalepet-state.js && node --check codex-state-follower.js && node --check preferences.js && node --check settings-window.js && node --check settings-preload.js && node --check settings.js",
+    "test:drag": "node tests/drag-soak.js",
+    "test:tail-hang": "electron tests/tail-hang.js",
+    "test:hd": "electron tests/hd-poses.js",
+    "test:idle-life": "electron tests/idle-life.js",
+    "test:small-scale": "electron tests/small-scale.js",
+    "test:physics": "node tests/drag-physics.js && electron tests/physics-runtime.js",
+    "test:rapid-drag": "electron tests/rapid-drag.js",
+    "test:motion": "node tests/motion-graph.js",
+    "test:bridge": "node tests/state-bridge.js",
+    "test:follow": "node tests/codex-state-follower.js",
+    "test:follow-renderer": "electron tests/auto-follow-renderer.js",
+    "test:settings": "electron tests/settings-ui.js",
+    "state:chatgpt": "node set-whalepet-state.js --provider chatgpt",
+    "state:deepseek": "node set-whalepet-state.js --provider deepseek",
+    "state:idle": "node set-whalepet-state.js idle 待机中",
+    "state:connecting": "node set-whalepet-state.js connecting 正在连接网络",
+    "state:thinking": "node set-whalepet-state.js thinking 正在认真思考",
+    "state:reading": "node set-whalepet-state.js reading 正在阅读文件",
+    "state:searching": "node set-whalepet-state.js searching 正在搜索文件",
+    "state:tool": "node set-whalepet-state.js tool_use 正在调用工具",
+    "state:working": "node set-whalepet-state.js working 正在处理文件",
+    "state:testing": "node set-whalepet-state.js testing 正在检查结果",
+    "state:generating": "node set-whalepet-state.js generating 正在生成内容",
+    "state:input": "node set-whalepet-state.js needs_input 需要你的回答",
+    "state:ready": "node set-whalepet-state.js ready 工作完成",
+    "state:blocked": "node set-whalepet-state.js blocked 遇到问题",
+    "start:deepseek-harness": "set WHALEPET_PROVIDER_LOCK=deepseek&& electron ."
+  },
+  "devDependencies": {
+    "electron": "43.4.1"
+  }
+}

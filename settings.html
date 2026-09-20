@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'">
+  <title>小鲸的控制室</title><link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">W</span><div>WhalePet<small>小鲸的控制室</small></div></div>
+    <p class="nav-caption">让陪伴更像你</p>
+    <nav aria-label="设置分类">
+      <button class="nav-item active" data-tab="appearance" aria-current="page"><span>◒</span>外观与大小</button>
+      <button class="nav-item" data-tab="poses"><span>▧</span>姿势图片</button>
+      <button class="nav-item" data-tab="connections"><span>⌘</span>AI 接入</button>
+    </nav>
+    <div class="sidebar-bottom"><span class="local-dot"></span>只保存在这台电脑<small>你的图片不会上传到网络。</small><button class="text-button" id="resetAll">恢复默认外观</button></div>
+  </aside>
+  <main>
+    <section id="appearance" class="page">
+      <header><p class="eyebrow">YOUR LITTLE COMPANION</p><h1>舒服的大小，熟悉的陪伴。</h1><p>保留小鲸的灵动，让她刚好融入你的桌面。</p></header>
+      <div class="appearance-grid">
+        <div class="preview-card"><span class="pill">外观预览</span><div class="preview-stage" id="appearanceStage"><img id="appearancePet" src="assets/whalepet-v015/idle.webp" alt="待机姿势预览"></div><strong id="sizeCaption">100% · 默认大小</strong><p>桌面上的小鲸会同步调整</p><div class="swatches" aria-label="预览背景"><button data-bg="sky" class="sky selected" aria-label="浅蓝背景" aria-pressed="true"></button><button data-bg="dark" class="dark" aria-label="深色背景" aria-pressed="false"></button><button data-bg="checker" class="checker" aria-label="棋盘透明背景" aria-pressed="false"></button></div></div>
+        <div class="controls-column">
+          <div class="card"><div class="card-title"><h2>桌宠大小</h2><output id="scaleValue" for="scale">100%</output></div><label class="sr-only" for="scale">桌宠大小</label><input type="range" min="65" max="150" step="5" value="100" id="scale"><div class="range-labels"><span>小巧 65%</span><span>醒目 150%</span></div><div class="presets"><button data-scale="0.75">75%</button><button data-scale="1">100%</button><button data-scale="1.25">125%</button><button data-scale="1.5">150%</button></div><p class="hint">松开滑块后生效，等比例缩放，不改变姿势。</p></div>
+          <div class="card"><label class="toggle-row"><span><strong>状态标签</strong><small>显示 AI 名称与当前动作</small></span><input type="checkbox" id="showBadge" role="switch" checked></label><label class="toggle-row"><span><strong>对话气泡</strong><small>显示工作提示和小鲸的回应</small></span><input type="checkbox" id="showSpeech" role="switch" checked></label></div>
+          <div class="card"><label class="toggle-row"><span><strong>待机微动作</strong><small>轻轻眨眼、摆尾；仅默认待机图生效<br>85% 及以下暂停浮动与摆尾，减少闪烁<br>遵循系统“减少动态效果”设置</small></span><input type="checkbox" id="idleLife" role="switch" checked></label></div>
+          <p class="shortcut-hint">找不到小鲸？按 <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>W</kbd><br>就能把她带回屏幕角落。</p>
+        </div>
+      </div>
+    </section>
+    <section id="poses" class="page" hidden>
+      <header><p class="eyebrow">A WARDROBE OF EXPRESSIONS</p><h1>每个动作，都可以有你的风格。</h1><p>逐个替换静态姿势，不影响现有拖动与转场。</p></header>
+      <div class="info-line"><span>i</span><p>推荐透明 PNG / WebP，单张 ≤ 8 MB、边长 ≤ 4096 px。导入后自动留边并对齐脚底；动图只取静态帧，不会自动抠图。</p></div>
+      <div class="pose-grid" id="poseGrid" aria-label="全部姿势"></div>
+    </section>
+    <section id="connections" class="page" hidden>
+      <header><p class="eyebrow">BETTER TOGETHER</p><h1>让小鲸跟上你的 AI。</h1><p>选择状态来源，再确认它真的发来了消息。</p></header>
+      <div class="card connection-card"><label class="field-label" for="provider">当前状态来源</label><select id="provider"><option value="chatgpt">ChatGPT / Codex</option><option value="deepseek">DeepSeek</option><option value="custom">自定义 AI（Claude、Gemini 等）</option></select><p id="sourceHint" class="hint"></p>
+        <label class="toggle-row" id="followRow"><span><strong>自动跟随本机 Codex</strong><small>读取新增任务事件，不读取登录凭据</small></span><input type="checkbox" id="autoFollow" role="switch"></label>
+        <div id="customNameRow" hidden><label class="field-label" for="customLabel">桌面标签名称</label><div class="input-action"><input id="customLabel" maxlength="20" placeholder="例如：Claude"><button id="saveName">保存名称</button></div><p class="hint">名称只用于显示；需要下方的适配代码发送实际状态。</p></div>
+      </div>
+      <div class="card live-card"><div><span class="live-dot" id="liveDot"></span><strong id="connectionStatus">正在读取状态…</strong><p id="connectionDetail" class="hint"></p></div><button id="refresh" class="quiet-button">刷新</button></div>
+      <details class="card integration-guide" id="integrationGuide"><summary>通用接入指南 <span>本地接口 · 无需 API 密钥</span></summary><p>在你的 AI 工具或脚本中，开始思考、调用工具和完成时发送相应状态。仅修改名称或打开网页不会自动接入。</p><div class="endpoint"><span>UDP · 仅本机</span><code id="endpoint"></code></div><div class="code-heading"><h3>Python 最小示例</h3><button id="copyPython" class="quiet-button">复制代码</button></div><pre id="pythonExample" tabindex="0"></pre><p class="hint">此示例仅发送一次“思考”。真正自动跟随需要在 AI 的事件回调中发送状态；消息不包含提示词或回复正文。</p><div class="code-heading"><h3>支持的状态</h3><button id="copyPacket" class="quiet-button">复制 JSON 消息</button></div><code id="stateNames" class="state-names"></code><p class="hint">也可由本机程序更新这个 JSON 状态文件：</p><code id="stateFile" class="file-path"></code></details>
+    </section>
+    <footer><span id="saveStatus" role="status" aria-live="polite">更改后自动保存</span><span>保留原作 · 随时还原</span></footer>
+  </main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="settings.js"></script>
+</body>
+</html>

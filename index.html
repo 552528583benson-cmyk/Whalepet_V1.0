@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+    <title>WhalePet Desktop</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body class="drag-room">
+    <main id="pet" class="pet state-idle provider-chatgpt" aria-label="WhalePet 桌面宠物">
+      <section id="speech" class="speech" aria-live="polite">
+        拖动我；单击预览状态；右键打开菜单
+      </section>
+      <div class="stage">
+        <div class="operation-effect wifi-effect" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="presentation">
+            <path d="M8 19c9-8 23-8 32 0"></path>
+            <path d="M14 26c6-5 14-5 20 0"></path>
+            <path d="M20 33c2-2 6-2 8 0"></path>
+            <circle cx="24" cy="39" r="2.8"></circle>
+          </svg>
+        </div>
+        <div class="operation-effect thought-effect" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="motion-layer">
+          <img
+            id="characterA"
+            class="character-layer is-visible"
+            src="assets/whalepet-hd/idle.png"
+            alt="小鲸鱼女仆正在待机"
+            draggable="false"
+          >
+          <img
+            id="characterB"
+            class="character-layer"
+            src="assets/whalepet-hd/idle.png"
+            alt=""
+            draggable="false"
+          >
+        </div>
+      </div>
+      <div id="stateBadge" class="state-badge">GPT · 待机</div>
+    </main>
+    <script src="idle-life.js"></script>
+    <script src="drag-physics.js"></script>
+    <script src="pet.js"></script>
+  </body>
+</html>

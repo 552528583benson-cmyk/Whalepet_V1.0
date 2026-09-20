@@ -1,6 +1,6 @@
 # WhalePet · 小鲸鱼桌宠
 
-一只陪你工作的小鲸：会眨眼、呼吸，也会在被拎住短尾巴时倒挂，随着鼠标移动摇摇晃晃 AuA。
+一只陪你工作的小鲸鱼：会眨眼、呼吸，也会在被拎住短尾巴时倒挂，随着鼠标移动摇摇晃晃 AuA。
 
 <p align="center"><img src="assets/whalepet-hd/idle.png" width="280" alt="WhalePet 小鲸鱼桌宠"></p>
 

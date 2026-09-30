@@ -51,10 +51,35 @@ app.whenReady().then(async()=>{
   assert.equal(await invoke('document.documentElement.scrollWidth<=innerWidth'),true,'compact layout has no horizontal overflow');
   fs.writeFileSync(path.join(shots,'compact.png'),(await settings.webContents.capturePage()).toPNG());
   settings.setSize(940,740);
+  await invoke("tab('appearance'); document.querySelector('#scaleNumber').value='83';document.querySelector('#scaleNumber').dispatchEvent(new Event('change'))");
+  await eventually(async()=>assert.equal((await good('petSettings.get()')).preferences.scale,.83));
+  await invoke("document.querySelector('#bubbleScale').value='115';document.querySelector('#bubbleScale').dispatchEvent(new Event('change'))");
+  await eventually(async()=>assert.equal((await good('petSettings.get()')).preferences.bubbleScale,1.15));
+  await invoke("document.querySelector('#bubbleOffset').value='18';document.querySelector('#bubbleOffset').dispatchEvent(new Event('change'))");
+  await eventually(async()=>assert.equal((await good('petSettings.get()')).preferences.bubbleOffset,18));
+  assert.equal(await pet.webContents.executeJavaScript('document.documentElement.style.getPropertyValue("--bubble-scale")'),'1.15');
+  assert.equal(await pet.webContents.executeJavaScript('document.documentElement.style.getPropertyValue("--bubble-offset")'),'18px');
+  assert.equal(readPreferences(path.join(run,'runtime/preferences.json')).bubbleScale,1.15);
+  await invoke("document.querySelector('#resetBubbles').click()");
+  await eventually(async()=>assert.equal((await good('petSettings.get()')).preferences.bubbleScale,1));
+  assert.equal((await good('petSettings.get()')).preferences.scale,.83,'bubble reset leaves pet size intact');
+  for(const size of [[560,480],[740,580],[1100,800]]){
+    settings.setSize(...size);await pause(300);
+    for(const name of ['appearance','poses','music','connections']){
+      await invoke(`tab('${name}')`);await pause(100);
+      assert.equal(await invoke('document.querySelector("main").scrollWidth<=document.querySelector("main").clientWidth'),true,`no content overflow ${size} ${name}`);
+      assert.equal(await invoke('document.querySelector("main").getBoundingClientRect().bottom<=innerHeight+1'),true,'only content pane scrolls inside window');
+    }
+    await invoke("tab('appearance');document.querySelector('#bubbleControls').scrollIntoView({block:'center'})");await pause(150);
+    await settings.webContents.capturePage();await pause(100);
+    fs.writeFileSync(path.join(shots,`flexible-${size[0]}.png`),(await settings.webContents.capturePage()).toPNG());
+  }
+  settings.setSize(940,740);
   await good('petSettings.save({scale:1.5,showBadge:false,showSpeech:false,idleLife:false})');
   assert.equal(readPreferences(path.join(run,'runtime/preferences.json')).idleLife,false,'micro-motion preference persisted');
   await invoke('petSettings.get().then(r=>{snapshot=r.value;render();})');
   assert.equal(await invoke('document.querySelector("#idleLife").checked'),false);
+  assert.equal(await invoke('document.querySelector("#bubbleControls").disabled'),true,'hidden bubbles retain disabled controls');
   await pause(1600);
   assert.equal(pet.webContents.getZoomFactor(),1.5);
   assert.equal(settings.webContents.getZoomFactor(),1,'pet scaling does not scale its controls');

@@ -1,6 +1,12 @@
 const {contextBridge,ipcRenderer}=require('electron');
 contextBridge.exposeInMainWorld('petSettings',{
+  importSong:()=>ipcRenderer.invoke('settings:song-import'),
+  previewSong:()=>ipcRenderer.invoke('settings:song-preview'),
+  stopSong:()=>ipcRenderer.invoke('settings:song-stop'),
+  disableSong:()=>ipcRenderer.invoke('settings:song-disable'),
+  openSongSource:()=>ipcRenderer.invoke('settings:song-source'),
   get:()=>ipcRenderer.invoke('settings:get'),
+  reloadCodex:()=>ipcRenderer.invoke('settings:reload-codex'),
   save:value=>ipcRenderer.invoke('settings:save',value),
   preview:state=>ipcRenderer.invoke('settings:preview',state),
   importImage:state=>ipcRenderer.invoke('settings:import',state),

@@ -24,6 +24,12 @@ app.whenReady().then(async()=>{
  const saved=await settings.webContents.executeJavaScript('petSettings.save({scale:.75})');assert.equal(saved.ok,true);
  await pause(150);assert.equal(pet.webContents.getZoomFactor(),.75);
  assert.equal(await js('window.whalePetController.hitTest(10,10)'),false);
- console.log('Packaged installation PASS: 12 HD poses, tail drag/release, idle-life, settings and 75% scaling.');app.quit();
+ const initial=await settings.webContents.executeJavaScript('petSettings.get()');
+ assert.equal(initial.value.preferences.idleSongEnabled,false);assert.equal(initial.value.idleSong.available,false,'no personal song shipped');
+ assert.equal(await js(`(async()=>{const image=new Image();image.src='assets/whalepet-music/dancing-v1.png';await image.decode();return image.naturalWidth;})()`),1254);
+ const adjusted=await settings.webContents.executeJavaScript('petSettings.save({bubbleScale:.9,bubbleOffset:12,scale:.83})');assert.equal(adjusted.ok,true);
+ await pause(100);assert.equal(await js('document.documentElement.style.getPropertyValue("--bubble-scale")'),'.9'.replace(/^\./,'0.'));
+ assert.equal(await settings.webContents.executeJavaScript('typeof petSettings.reloadCodex'),'function');
+ console.log('Packaged installation PASS: 12 HD poses, tail drag/release, idle-life, precise scaling/bubbles, music CG, default silence and reload API.');app.quit();
 }).catch(e=>{console.error(e);app.exit(1)});
 setTimeout(()=>app.exit(1),30000).unref();

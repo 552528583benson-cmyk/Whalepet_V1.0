@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("whalePet", {
+  idleSongActivity:()=>ipcRenderer.send('pet:idle-song-activity'),
+  idleSongResult:value=>ipcRenderer.send('pet:idle-song-result',value),
+  onIdleSong:listener=>ipcRenderer.on('pet:idle-song',(_event,value)=>listener(value)),
   beginDrag: (value) => ipcRenderer.send("pet:drag-start", value),
   moveDrag: () => ipcRenderer.send("pet:drag-move"),
   endDrag: (value) => ipcRenderer.send("pet:drag-end", value),

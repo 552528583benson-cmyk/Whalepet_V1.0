@@ -2,6 +2,8 @@ const { BrowserWindow, ipcMain, dialog, nativeImage, clipboard } = require('elec
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { pathToFileURL } = require('node:url');
+const {readAudioSource}=require('./idle-song-import');
 const { POSES } = require('./preferences');
 
 // Import raster bytes only: never execute user scripts or load remote image URLs.
@@ -35,6 +37,32 @@ function createSettingsController(api) {
     try {return {ok:true,value:await fn(...args)};} catch(error) {return {ok:false,error:error.message};}
   };
   ipcMain.handle('settings:get',safe(()=>api.snapshot()));
+  ipcMain.handle('settings:reload-codex',safe(()=>api.reloadCodex()));
+  ipcMain.handle('settings:song-import',safe(async()=>{
+    const pick=await dialog.showOpenDialog(window,{title:'选择小鲸的摸鱼小曲',properties:['openFile'],filters:[{name:'本地音频 / LetMeGo 源文件',extensions:['mp3','wav','m4a','ogg','html','htm']}]});
+    if(pick.canceled)return {cancelled:true};
+    const imported=readAudioSource(pick.filePaths[0]);
+    const name=randomUUID()+imported.ext;
+    fs.mkdirSync(api.audioDirectory,{recursive:true});
+    const target=path.join(api.audioDirectory,name);
+    fs.writeFileSync(target,imported.bytes,{flag:'wx'});
+    try {
+      const url=pathToFileURL(target).href;
+      await window.webContents.executeJavaScript(`new Promise((resolve,reject)=>{
+        const a=new Audio();a.preload='metadata';
+        const timer=setTimeout(()=>finish(false),8000);
+        function finish(ok){clearTimeout(timer);a.onloadedmetadata=null;a.onerror=null;a.removeAttribute('src');a.load();ok?resolve(true):reject(new Error('无法解码音频，或歌曲超过 10 分钟；请换用有效的 MP3 / WAV。'));}
+        a.onloadedmetadata=()=>finish(Number.isFinite(a.duration)&&a.duration>0&&a.duration<=600);
+        a.onerror=()=>finish(false);a.src=${JSON.stringify(url)};
+      })`);
+      api.setSong(name,imported.name);
+    } catch(error) {fs.unlinkSync(target);throw error;}
+    return {snapshot:api.snapshot()};
+  }));
+  ipcMain.handle('settings:song-preview',safe(()=>{api.previewSong();return true;}));
+  ipcMain.handle('settings:song-stop',safe(()=>{api.stopSong();return true;}));
+  ipcMain.handle('settings:song-disable',safe(()=>{api.disableSong();return api.snapshot();}));
+  ipcMain.handle('settings:song-source',safe(()=>api.openSongSource()));
   ipcMain.handle('settings:save',safe(async patch=>{
     if(!patch || typeof patch!=='object') throw new Error('设置格式无效');
     await api.save(patch); return api.snapshot();
@@ -90,7 +118,7 @@ function createSettingsController(api) {
   return {
     open(tab='appearance') {
       if(window&&!window.isDestroyed()){window.show();window.focus();window.webContents.send('settings:tab',tab);return;}
-      window=new BrowserWindow({width:940,height:740,minWidth:740,minHeight:580,title:'小鲸的控制室',autoHideMenuBar:true,backgroundColor:'#f5f7fc',show:false,
+      window=new BrowserWindow({width:940,height:740,minWidth:560,minHeight:480,title:'小鲸的控制室',autoHideMenuBar:true,backgroundColor:'#f5f7fc',show:false,
         webPreferences:{preload:path.join(__dirname,'settings-preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
       window.setMenu(null);
       window.webContents.setWindowOpenHandler(()=>({action:'deny'}));

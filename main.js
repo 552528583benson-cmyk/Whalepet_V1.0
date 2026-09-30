@@ -1,10 +1,11 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, Menu, screen, shell } = require("electron");
+const { app, BrowserWindow, globalShortcut, ipcMain, Menu, screen, shell, dialog } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const dgram = require("dgram");
-const { CodexStateFollower } = require("./codex-state-follower");
+const { CodexStateFollower, priority } = require("./codex-state-follower");
 const { POSES, readPreferences, writePreferences, normalizePreferences } = require('./preferences');
 const { createSettingsController } = require('./settings-window');
+const { createIdleSongController } = require('./idle-song');
 const {
   STATES: STATE_NAMES,
   VALID_STATES,
@@ -55,6 +56,8 @@ let followStatus = { status: "starting" };
 let renderedState = null;
 let preferences = normalizePreferences();
 let settingsController = null;
+let idleSongController = null;
+let musicMuteShortcut = false;
 let preferencesRevision = 0;
 const lastBridgeEvents = {};
 const stateWatchListener = () => readStateFile();
@@ -96,6 +99,7 @@ function saveAppearance(patch) {
   preferencesRevision++;
   if(previousScale!==preferences.scale) applyPetSize();
   petWindow?.webContents.send('pet:preferences',rendererPreferences());
+  if(Object.keys(patch).some(key=>key.startsWith('idleSong')))idleSongController?.changed();
 }
 
 function settingsSnapshot() {
@@ -104,6 +108,8 @@ function settingsSnapshot() {
   const packet={type:'whalepet-state',provider,state:'thinking',message:'正在认真思考',nonce:'your-unique-id'};
   return {
     preferences:{...preferences,images:{...preferences.images}},
+    idleSong:idleSongController?.snapshot()||{available:false,playing:false,error:''},
+    musicMuteShortcut,
     poses:POSES.map(([state,label,filename])=>({state,label,custom:Boolean(rendered.images[filename]),url:rendered.images[filename]||`assets/whalepet-hd/${filename.replace(/\.webp$/,'.png')}`})),
     provider,providerLocked,autoFollowCodex:autoFollow,follower:followStatus,
     state:currentState.state,renderedState,lastReceivedAt:lastBridgeEvents[provider]||null,
@@ -120,9 +126,16 @@ function settingsSnapshot() {
 function setupSettings() {
   settingsController=createSettingsController({
     snapshot:settingsSnapshot,imageDirectory:getRuntimeFile('custom-images'),preview:setPreviewState,
+    reloadCodex:reloadCodexStatus,
+    audioDirectory:getRuntimeFile('custom-audio'),
+    setSong:(file,name)=>saveAppearance({idleSongFile:file,idleSongName:name}),
+    previewSong:()=>idleSongController.preview(),
+    stopSong:()=>idleSongController.stop(),
+    disableSong:disableIdleSong,
+    openSongSource:()=>shell.openExternal('https://www.bilibili.com/video/BV1pue56AEyL/'),
     save(patch) {
       const appearance={};
-      for(const key of ['scale','showBadge','showSpeech','idleLife','customLabel']) if(Object.hasOwn(patch,key)) appearance[key]=patch[key];
+      for(const key of ['scale','bubbleScale','bubbleOffset','showBadge','showSpeech','idleLife','customLabel','idleSongEnabled','idleSongMode','idleSongVolume']) if(Object.hasOwn(patch,key)) appearance[key]=patch[key];
       if(Object.keys(appearance).length) saveAppearance(appearance);
       if(!providerLocked && VALID_PROVIDERS.has(patch.provider)) setStateProvider(patch.provider);
       if(!providerLocked && typeof patch.autoFollowCodex==='boolean') {
@@ -134,7 +147,7 @@ function setupSettings() {
       if(name)images[state]=name;else delete images[state];
       saveAppearance({images});setPreviewState(state);
     },
-    reset:()=>saveAppearance({scale:1,showBadge:true,showSpeech:true,idleLife:true,images:{}})
+    reset:()=>saveAppearance({scale:1,bubbleScale:1,bubbleOffset:0,showBadge:true,showSpeech:true,idleLife:true,images:{}})
   });
 }
 
@@ -325,11 +338,32 @@ function ensureStateFile() {
   }
 }
 
+function codexConversations() {
+  return activeProvider==='chatgpt' && autoFollow && codexFollower ? codexFollower.reducer.conversations() : [];
+}
+
+function codexConversationOverflow() {
+  return activeProvider==='chatgpt' && autoFollow && codexFollower ? codexFollower.reducer.overflow() : {count:0,uncertain:0};
+}
+
+function effectiveState(fallback) {
+  const selected=activeProvider==='chatgpt'&&autoFollow&&codexFollower?.reducer.current();
+  // A generic bridge/file update must not erase another thread's question,
+  // failure, or active work. Idle follow state still allows external bridges.
+  return selected && (selected.completion || priority(selected.state)>=50 || priority(selected.state)>priority(fallback.state))
+    ? normalizeState(selected) : fallback;
+}
+
 function sendCurrentState(extra = {}) {
+  currentState=effectiveState(currentState);
+  idleSongController?.stateChanged();
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send("pet:state", {
       ...currentState,
       provider: activeProvider,
+      conversations: codexConversations(),
+      conversationOverflow: codexConversationOverflow(),
+      conversationTracking: activeProvider==='chatgpt' && autoFollow && Boolean(codexFollower),
       ...extra
     });
   }
@@ -339,7 +373,7 @@ function readStateFile(force = false, providerChanged = false) {
   try {
     const next = normalizeState(JSON.parse(fs.readFileSync(stateFile, "utf8")));
     const unchanged = next.state === currentState.state && next.message === currentState.message;
-    currentState = next;
+    currentState = effectiveState(next);
     if (!unchanged || force) sendCurrentState({ providerChanged });
   } catch (error) {
     console.warn(`WhalePet ignored an invalid state file: ${error.message}`);
@@ -375,7 +409,8 @@ function startStateBridge() {
         socket.send(Buffer.from(JSON.stringify({
           type: "whalepet-status-reply", nonce: value.nonce || "",
           provider: activeProvider, state: currentState.state,
-          renderedState, autoFollowCodex: autoFollow, follower: followStatus
+          renderedState, autoFollowCodex: autoFollow, follower: followStatus,
+          music:{enabled:preferences.idleSongEnabled,mode:preferences.idleSongMode,muteShortcut:musicMuteShortcut,...idleSongController?.snapshot()}
         })), remote.port, remote.address);
         return;
       }
@@ -410,6 +445,7 @@ function configureCodexFollower() {
   codexFollower = null;
   if (!autoFollow || providerLocked || process.env.WHALEPET_DISABLE_AUTO_FOLLOW === "1") {
     followStatus = { status: "disabled" };
+    sendCurrentState();
     return;
   }
   codexFollower = new CodexStateFollower({
@@ -424,6 +460,15 @@ function configureCodexFollower() {
     onStatus: (status) => { followStatus = status; }
   });
   codexFollower.start();
+}
+
+async function reloadCodexStatus() {
+  const follower=codexFollower;
+  if(providerLocked||activeProvider!=='chatgpt'||!autoFollow||!follower)throw new Error('请先选择 ChatGPT / Codex 并开启自动跟随。');
+  await follower.reload();
+  if(follower!==codexFollower||activeProvider!=='chatgpt')throw new Error('状态来源已改变，请在当前来源下重试。');
+  sendCurrentState({statusReloaded:true});
+  return settingsSnapshot();
 }
 
 function setStateProvider(provider) {
@@ -455,6 +500,11 @@ function setPreviewState(state) {
   }
 }
 
+function disableIdleSong() {
+  idleSongController?.stop();
+  saveAppearance({idleSongEnabled:false});
+}
+
 function showPetMenu() {
   const providerMenu = providerLocked
     ? [{ label: `状态来源：${PROVIDERS[activeProvider].label}（固定）`, enabled: false }]
@@ -482,11 +532,18 @@ function showPetMenu() {
   const menu = Menu.buildFromTemplate([
     {label:'小鲸的控制室…',click:()=>settingsController.open()},
     {label:'更换姿势图片…',click:()=>settingsController.open('poses')},
+    {label:'摸鱼小曲…',click:()=>settingsController.open('music')},
+    {label:'允许待机偷偷唱歌',type:'checkbox',checked:preferences.idleSongEnabled,click:item=>{if(item.checked)saveAppearance({idleSongEnabled:true});else disableIdleSong();}},
+    {label:'关闭自动唱歌'+(musicMuteShortcut?'（Ctrl+Alt+M）':''),click:disableIdleSong},
+    {label:'嘘，先别唱啦',enabled:Boolean(idleSongController?.snapshot().playing),click:()=>idleSongController?.stop()},
     {label:`大小 · ${Math.round(preferences.scale*100)}%`,submenu:[.75,1,1.25,1.5].map(scale=>({label:`${Math.round(scale*100)}%${scale===1?'（默认）':''}`,type:'radio',checked:preferences.scale===scale,click:()=>saveAppearance({scale})}))},
     {label:'动作预览',submenu:POSES.map(([state,label])=>({label,click:()=>setPreviewState(state)}))},
     { type: "separator" },
     ...providerMenu,
     ...(!providerLocked?[{label:'AI 接入设置…',click:()=>settingsController.open('connections')}]:[]),
+    ...(!providerLocked?[{label:'重新读取 Codex 状态',enabled:activeProvider==='chatgpt'&&autoFollow&&Boolean(codexFollower),click:async()=>{
+      try{await reloadCodexStatus();}catch(error){dialog.showMessageBox(petWindow,{type:'warning',title:'状态重载未完成',message:error.message});}
+    }}]:[]),
     ...(!providerLocked ? [{
       label: "自动跟随本机 Codex 任务", type: "checkbox", checked: autoFollow,
       click: () => { autoFollow = !autoFollow; saveProviderSetting(); configureCodexFollower(); }
@@ -614,7 +671,8 @@ function createPetWindow() {
       sandbox: true,
       spellcheck: false,
       devTools: false,
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      autoplayPolicy:'no-user-gesture-required'
     }
   });
 
@@ -872,6 +930,9 @@ if (!hasLock) {
     preferences=readPreferences(getRuntimeFile('preferences.json'));
     windowStateFile = getWindowStateFile();
     createPetWindow();
+    idleSongController=createIdleSongController({getWindow:()=>petWindow,getPreferences:()=>preferences,getDirectory:()=>getRuntimeFile('custom-audio'),isBlocked:()=>petHidden||Boolean(dragCursor)||!petWindow||petWindow.isDestroyed(),isAiIdle:()=>activeProvider==='chatgpt'&&['idle','ready'].includes(currentState.state)&&renderedState==='idle'&&!(autoFollow&&codexFollower?.reducer.hasUnresolved())});
+    petWindow.webContents.on('did-start-loading',()=>idleSongController.activity());
+    petWindow.webContents.on('render-process-gone',()=>idleSongController.activity());
     watchStateFile();
     startStateBridge();
     configureCodexFollower();
@@ -879,6 +940,7 @@ if (!hasLock) {
     if(process.env.WHALEPET_QA_SETTINGS==='1'||process.argv.includes('--settings'))settingsController.open();
     globalShortcut.register("CommandOrControl+Alt+W", cyclePetSafeCorner);
     globalShortcut.register("CommandOrControl+Alt+H", togglePetVisibility);
+    musicMuteShortcut=globalShortcut.register('CommandOrControl+Alt+M',disableIdleSong);
     if (!providerLocked) {
       globalShortcut.register("CommandOrControl+Alt+P", cycleStateProvider);
     }
@@ -952,6 +1014,9 @@ if (!hasLock) {
     ipcMain.handle("pet:request-state", () => ({
       ...currentState,
       provider: activeProvider,
+      conversations: codexConversations(),
+      conversationOverflow: codexConversationOverflow(),
+      conversationTracking: activeProvider==='chatgpt' && autoFollow && Boolean(codexFollower),
       providerLocked
     }));
     ipcMain.handle('pet:request-preferences', event=>{
@@ -968,6 +1033,7 @@ if (!hasLock) {
 
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => {
+  idleSongController?.dispose();
   codexFollower?.stop();
   stopDragTracking();
   if (boundsGuardTimer) clearInterval(boundsGuardTimer);

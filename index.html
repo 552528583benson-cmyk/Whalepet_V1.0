@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; media-src 'self' file:">
     <title>WhalePet Desktop</title>
     <link rel="stylesheet" href="style.css">
   </head>
@@ -12,6 +12,7 @@
       <section id="speech" class="speech" aria-live="polite">
         拖动我；单击预览状态；右键打开菜单
       </section>
+      <section id="conversationBubbles" class="conversation-bubbles" aria-label="Codex 会话状态" aria-live="polite" hidden></section>
       <div class="stage">
         <div class="operation-effect wifi-effect" aria-hidden="true">
           <svg viewBox="0 0 48 48" role="presentation">
@@ -45,6 +46,8 @@
     </main>
     <script src="idle-life.js"></script>
     <script src="drag-physics.js"></script>
+    <script src="music-dance.js"></script>
     <script src="pet.js"></script>
+    <script src="idle-song-player.js"></script>
   </body>
 </html>

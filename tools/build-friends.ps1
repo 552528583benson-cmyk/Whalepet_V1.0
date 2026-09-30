@@ -1,4 +1,4 @@
-param([string]$ReleaseName='WhalePet-Friends-20260920')
+param([string]$ReleaseName='WhalePet-Friends-20260930')
 $ErrorActionPreference='Stop'
 if($ReleaseName -notmatch '^WhalePet-Friends-[0-9-]+$'){throw 'Invalid release name'}
 $projectRoot=Split-Path $PSScriptRoot -Parent
@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Path (Join-Path $stage 'locales') | Out-Null
 foreach($locale in 'en-US','zh-CN','zh-TW'){
  Copy-Item -LiteralPath (Join-Path $electronRoot "locales\$locale.pak") -Destination (Join-Path $stage 'locales')
 }
-$appFiles=@('main.js','pet.js','preload.js','index.html','style.css','idle-life.js','drag-physics.js','drag-math.js','state-schema.js','codex-state-follower.js','preferences.js','settings-window.js','settings-preload.js','settings.js','settings.html','settings.css','set-whalepet-state.js','get-whalepet-status.js','PROVIDER_INTEGRATION.md')
+$appFiles=@('main.js','pet.js','preload.js','index.html','style.css','idle-life.js','idle-song.js','idle-song-import.js','idle-song-player.js','music-dance.js','drag-physics.js','drag-math.js','state-schema.js','codex-state-follower.js','preferences.js','settings-window.js','settings-preload.js','settings.js','settings.html','settings.css','set-whalepet-state.js','get-whalepet-status.js','PROVIDER_INTEGRATION.md')
 foreach($file in $appFiles){Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $appDir}
 $package=Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json
 # Runtime-only manifest: no developer commands or dependencies are shipped.
@@ -29,7 +29,15 @@ $tail=Join-Path $appDir 'assets\generated-transitions\tail-hang'
 New-Item -ItemType Directory -Path $tail -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\generated-transitions\tail-hang\pose.png') -Destination $tail
 Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\whalepet-v015\WhalePet.ico') -Destination (Join-Path $stage 'WhalePet.ico')
-foreach($file in 'ASSET_ATTRIBUTION.md','THIRD_PARTY_REFERENCES.md','LICENSES'){
+$music=Join-Path $appDir 'assets\whalepet-music'
+New-Item -ItemType Directory -Path $music -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\whalepet-music\dancing-v1.png') -Destination $music
+New-Item -ItemType Directory -Path (Join-Path $appDir 'docs') -Force | Out-Null
+foreach($file in 'USER_GUIDE.md','IDLE_SONG.md','RELEASE-20260930.md'){
+ Copy-Item -LiteralPath (Join-Path $projectRoot "docs\$file") -Destination (Join-Path $appDir 'docs')
+}
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\RUNTIME_ASSETS.md') -Destination (Join-Path $stage 'ASSET_ATTRIBUTION.md')
+foreach($file in 'THIRD_PARTY_REFERENCES.md','LICENSES'){
  Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $stage -Recurse
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\FRIENDS-README.txt') -Destination (Join-Path $stage 'SHARE-README.txt')

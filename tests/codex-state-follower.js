@@ -22,6 +22,8 @@ async function main() {
   assert.equal(tasks.current().state, "needs_input");
   now++;
   tasks.consume("a", event("response_item", { type: "reasoning" }));
+  assert.equal(tasks.current().state, "needs_input",'background work must not clear an unanswered async question');
+  tasks.consume('a',event('event_msg',{type:'user_message'}));
   assert.equal(tasks.current().state, "thinking");
   now++;
   tasks.consume("a", event("response_item", { type: "message", role: "assistant", phase: "final" }));

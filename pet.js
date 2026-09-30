@@ -202,7 +202,7 @@ const alphaCache = new Map();
 let dragExpressionTimers = [];
 const idleLife = window.createIdleLife({parent:motionLayer,pet,compact:()=>Number(userPreferences.scale||1)<=.85,eligible:()=>
   activeState==='idle' && !dragVisualActive && !transitionInProgress &&
-  !reducedMotion.matches && userPreferences.idleLife!==false &&
+  !reducedMotion.matches && !document.body.classList.contains('music-playing') && userPreferences.idleLife!==false &&
   !userPreferences.images['idle.webp'] &&
   layers[visibleLayer].dataset.filename==='idle.webp' && layers[visibleLayer].complete &&
   layers[visibleLayer].src.includes('/whalepet-hd/idle.png')
@@ -306,9 +306,15 @@ function alphaMapFor(layer) {
 }
 
 function characterContains(x, y) {
-  const layer = layers[visibleLayer];
+  const musicLayer=document.querySelector('.music-cg');
+  const layer = document.body.classList.contains('music-playing') && musicLayer && !musicLayer.hidden ? musicLayer : layers[visibleLayer];
   const map = alphaMapFor(layer);
-  const rect = layer.getBoundingClientRect();
+  let rect = layer.getBoundingClientRect();
+  if(layer===musicLayer && map && window.WhaleMusicDance) {
+    const point=window.WhaleMusicDance.localPoint(rect,layer.clientWidth,layer.clientHeight,Number(layer.dataset.danceAngle)||0,x,y);
+    x=point.x;y=point.y;
+    rect={left:0,top:0,right:layer.clientWidth,bottom:layer.clientHeight,width:layer.clientWidth,height:layer.clientHeight};
+  }
   if (!map || !rectContains(rect, x, y)) return false;
   const scale = Math.min(rect.width / map.width, rect.height / map.height);
   const renderedWidth = map.width * scale;
@@ -757,7 +763,43 @@ function commitState(value, forceRestart = false) {
   }
 }
 
+function updateConversationBubbles(value) {
+  if(value?.preview)return;
+  if((!value?.provider||value.provider==='chatgpt')&&!Array.isArray(value?.conversations))return;
+  const container=document.querySelector('#conversationBubbles');
+  if(!container)return;
+  const items=(value?.provider==='chatgpt' && Array.isArray(value.conversations)?value.conversations:[]).slice(0,2);
+  document.body.classList.toggle('conversation-following',value?.provider==='chatgpt'&&value.conversationTracking===true);
+  const hiddenCount=value?.provider==='chatgpt'?Math.max(0,Math.floor(Number(value.conversationOverflow?.count)||0)):0;
+  const uncertainCount=Math.min(hiddenCount,Math.max(0,Math.floor(Number(value.conversationOverflow?.uncertain)||0)));
+  const key=JSON.stringify([items,hiddenCount,uncertainCount]);
+  if(container.dataset.value===key)return;
+  container.dataset.value=key;
+  container.replaceChildren();
+  container.hidden=items.length===0;
+  document.body.classList.toggle('has-conversations',items.length>0);
+  for(const [index,item] of items.entries()) {
+    const card=document.createElement('div');card.className='conversation-bubble';card.dataset.conversationId=item.id;
+    const state=STATES[item.state]?item.state:'idle';card.dataset.state=state;
+    card.dataset.uncertain=String(item.uncertain===true);
+    const name=document.createElement('span');name.className='conversation-name';
+    name.textContent=typeof item.title==='string'?item.title.slice(0,120):`会话 ${String(item.id||'').replace(/[^a-z0-9]/gi,'').slice(0,6).toUpperCase()}`;
+    name.title=name.textContent;
+    const urgent=state==='needs_input'||state==='blocked';
+    const label=state==='needs_input'?'等你确认':STATES[state].label;
+    const status=document.createElement('strong');status.textContent=`${item.primary?'● ':''}${item.uncertain&&!urgent?'状态待确认':label}${item.uncertain&&urgent?' · 待确认':''}`;
+    card.setAttribute('aria-label',`${name.textContent}：${status.textContent}`);
+    card.append(name,status);container.append(card);
+  }
+  if(hiddenCount&&items.length) {
+    const more=document.createElement('div');more.className='conversation-overflow';
+    more.textContent=uncertainCount?`另有 ${hiddenCount} 项 · ${uncertainCount} 待确认`:`另有 ${hiddenCount} 个进行中`;
+    container.append(more);
+  }
+}
+
 function applyIncomingState(value) {
+  updateConversationBubbles(value);
   const state = STATES[value?.state] ? value.state : "idle";
   const provider = PROVIDER_UI[value?.provider] ? value.provider : activeProvider;
   const next = {
@@ -768,6 +810,15 @@ function applyIncomingState(value) {
     providerChanged: value?.providerChanged === true
   };
   const now = performance.now();
+
+  // User attention is more important than a local preview or finishing a
+  // decorative transition. Dragging itself is never interrupted.
+  if(!next.preview && (value?.statusReloaded || ['needs_input','blocked'].includes(state))) {
+    previewUntil=0;clearTimeout(previewTimer);clearTimeout(deferredStateTimer);
+    clearTimeout(queuedStateTimer);queuedIncomingState=null;
+    lastExternalState={state:next.state,message:next.message,provider:next.provider};
+    commitState(next,Boolean(value?.statusReloaded)||state!==activeState||next.providerChanged);return;
+  }
 
   // Never cut a character action in half. Keep only the newest request so a
   // burst of status events produces one coherent follow-up action, not a stack.
@@ -964,6 +1015,8 @@ window.whalePet.onState(applyIncomingState);
 function applyPreferences(value) {
   const imagesChanged=JSON.stringify(userPreferences.images)!==JSON.stringify(value.images||{});
   userPreferences={...userPreferences,...value};
+  document.documentElement.style.setProperty('--bubble-scale',String(userPreferences.bubbleScale||1));
+  document.documentElement.style.setProperty('--bubble-offset',`${userPreferences.bubbleOffset||0}px`);
   document.body.classList.toggle('compact-pet',Number(userPreferences.scale||1)<=.85);
   document.body.classList.toggle('hide-badge',!userPreferences.showBadge);
   document.body.classList.toggle('hide-speech',!userPreferences.showSpeech);

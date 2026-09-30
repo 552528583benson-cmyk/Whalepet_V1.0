@@ -16,8 +16,15 @@ function normalizePreferences(value = {}) {
   }
   return {
     scale: Number.isFinite(scale) ? Math.round(Math.max(.65, Math.min(1.5, scale))*100)/100 : 1,
+    bubbleScale: Number.isFinite(value.bubbleScale) ? Math.round(Math.max(.8,Math.min(1.2,value.bubbleScale))*100)/100 : 1,
+    bubbleOffset: Number.isFinite(value.bubbleOffset) ? Math.round(Math.max(-20,Math.min(30,value.bubbleOffset))) : 0,
     showBadge: value.showBadge !== false, showSpeech: value.showSpeech !== false,
     idleLife: value.idleLife !== false,
+    idleSongEnabled: value.idleSongEnabled === true,
+    idleSongMode: ['pet','system'].includes(value.idleSongMode) ? value.idleSongMode : 'ai',
+    idleSongVolume: Number.isFinite(value.idleSongVolume) ? Math.max(0,Math.min(.5,value.idleSongVolume)) : .18,
+    idleSongFile: /^[a-f0-9-]{36}\.(mp3|wav|m4a|ogg)$/.test(value.idleSongFile || '') ? value.idleSongFile : '',
+    idleSongName: typeof value.idleSongName === 'string' ? value.idleSongName.slice(0,120) : '',
     customLabel: typeof value.customLabel === 'string' ? value.customLabel.trim().slice(0,20) || '我的 AI' : '我的 AI',
     images
   };

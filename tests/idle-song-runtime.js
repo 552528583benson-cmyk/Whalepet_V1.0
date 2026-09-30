@@ -1,0 +1,161 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {app,BrowserWindow,dialog,powerMonitor,globalShortcut,Menu}=require('electron');
+const root=path.resolve(__dirname,'..'),run=fs.mkdtempSync(path.join(root,'work/idle-song-test-'));
+process.env.WHALEPET_RUNTIME_DIR=path.join(run,'runtime');
+process.env.WHALEPET_QA_ALLOW_SECOND_INSTANCE='1';process.env.WHALEPET_QA_HIDDEN='1';process.env.WHALEPET_QA_SETTINGS='1';process.env.WHALEPET_DISABLE_AUTO_FOLLOW='1';
+process.env.WHALEPET_BRIDGE_PORT=String(44000+process.pid%1000);
+app.setPath('userData',path.join(run,'electron'));app.setAppPath(root);
+let clock=0,idle=0;
+const mod=require('../idle-song'),original=mod.createIdleSongController;
+let controller;
+let emergencyMute;
+const register=globalShortcut.register.bind(globalShortcut);
+globalShortcut.register=(key,fn)=>{if(key==='CommandOrControl+Alt+M'){emergencyMute=fn;return false;}return register(key,fn);};
+mod.createIdleSongController=options=>(controller=original({...options,clock:()=>clock}));
+powerMonitor.getSystemIdleTime=()=>idle;powerMonitor.getSystemIdleState=()=> 'active';
+require('../main');
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+async function eventually(fn){let last;for(let i=0;i<80;i++){try{return await fn();}catch(e){last=e;await pause(100);}}throw last;}
+// Locally generated silent PCM is a decoder fixture, not the requested song.
+const wav=Buffer.alloc(44+8000*2*30);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(8000,24);wav.writeUInt32LE(16000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(wav.length-44,40);
+const source=path.join(run,'silent-fixture.wav');fs.writeFileSync(source,wav);
+app.whenReady().then(async()=>{
+  const settings=await eventually(()=>{const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('settings.html'));assert.ok(w);return w;});
+  const pet=BrowserWindow.getAllWindows().find(w=>w!==settings);pet.webContents.setAudioMuted(true);
+  // Hidden Chromium windows suspend RAF. Keep the isolated test window fully
+  // transparent and unfocused while allowing its compositor to run normally.
+  pet.setOpacity(0);pet.showInactive();
+  const js=s=>settings.webContents.executeJavaScript(s),petJs=s=>pet.webContents.executeJavaScript(s);
+  await eventually(async()=>assert.equal(await js('typeof window.petSettings'), 'object'));
+  await eventually(async()=>assert.equal(await petJs('Boolean(document.querySelector(".idle-song-note"))'),true));
+  await petJs('void (window.Audio=new Proxy(Audio,{construct(Target,args){window.qaSong=new Target(...args);return window.qaSong;}}))');
+  const good=async s=>{const r=await js(s);assert.equal(r.ok,true,r.error);return r.value;};
+  await good('petSettings.save({idleSongMode:"system"})');
+  assert.equal((await js('petSettings.previewSong()')).ok,false,'missing song is explained');
+  dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});
+  assert.equal((await good('petSettings.importSong()')).cancelled,true);
+  dialog.showOpenDialog=async()=>({canceled:false,filePaths:[source]});
+  const imported=await good('petSettings.importSong()');
+  assert.equal(imported.snapshot.idleSong.available,true);assert.equal(imported.snapshot.preferences.idleSongEnabled,false,'import never silently enables automatic music');
+  await good('petSettings.save({idleSongEnabled:true})');
+  await js('petSettings.get().then(r=>{snapshot=r.value;render();tab("music")})');
+  assert.equal(await js('document.querySelector("#music").hidden'),false);
+  settings.setSize(740,580);await pause(200);
+  assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);
+  fs.writeFileSync(path.join(run,'music-settings.png'),(await settings.webContents.capturePage()).toPNG());
+  clock=299000;idle=299;await pause(650);assert.equal(controller.snapshot().playing,false);
+  clock=300000;idle=300;await eventually(()=>assert.equal(controller.snapshot().playing,true));
+  await eventually(async()=>assert.equal(await petJs('document.querySelector(".idle-song-note").hidden'),false));
+  await eventually(async()=>assert.equal(await petJs('document.body.classList.contains("music-playing")'),true));
+  const firstDance=await petJs('document.querySelector(".music-cg").style.transform');await pause(320);
+  assert.notEqual(await petJs('document.querySelector(".music-cg").style.transform'),firstDance,'music really animates, not a still CG');
+  await petJs('qaSong.pause()');await pause(100);
+  const frozenDance=await petJs('document.querySelector(".music-cg").style.transform');await pause(200);
+  assert.equal(await petJs('document.querySelector(".music-cg").style.transform'),frozenDance,'paused audio freezes the dance');
+  await petJs('qaSong.play()');
+  assert.equal(await petJs('getComputedStyle(document.querySelector(".character-layer")).visibility'),'hidden');
+  assert.equal(await petJs('(()=>{const r=document.querySelector(".music-cg").getBoundingClientRect();return characterContains(r.x+r.width*.5,r.y+r.height*.5);})()'),true,'music CG is clickable using its own alpha map');
+  const animationState=await petJs('window.whalePetController.getState().state');
+  for(const [name,bg] of [['black','#080808'],['navy','#102045'],['gray','#888888'],['checker','repeating-conic-gradient(#ddd 0% 25%,#fff 0% 50%) 0 / 24px 24px']]) {
+    await petJs(`document.documentElement.style.background=${JSON.stringify(bg)}`);await pause(90);
+    fs.writeFileSync(path.join(run,'music-cg-'+name+'.png'),(await pet.webContents.capturePage()).toPNG());
+  }
+  assert.equal(await petJs('window.whalePetController.getState().state'),animationState,'CG does not replace AI state');
+  const proof=await petJs(`(()=>{
+    const image=document.querySelector('.music-cg'),c=document.createElement('canvas');c.width=1536;c.height=640;const g=c.getContext('2d');
+    for(let n=0;n<4;n++){
+      const x=n*384;if(n<3){g.fillStyle=['#080808','#102045','#888888'][n];g.fillRect(x,0,384,640);}else for(let y=0;y<640;y+=16)for(let k=0;k<384;k+=16){g.fillStyle=(k/16+y/16)%2?'#ddd':'#fff';g.fillRect(x+k,y,16,16);}
+      g.drawImage(image,x+12,32,360,360);g.fillStyle=n<2?'white':'#182044';g.font='18px sans-serif';g.fillText(['Black','Deep blue','Gray','Checkerboard'][n],x+24,25);
+      g.drawImage(image,420,60,460,290,x+24,421,336,211);
+    }return c.toDataURL('image/png');})()`);
+  fs.writeFileSync(path.join(run,'music-cg-proof.png'),Buffer.from(proof.split(',')[1],'base64'));
+  await good('petSettings.save({scale:.75})');await pause(120);
+  assert.equal(pet.webContents.getZoomFactor(),.75);
+  assert.equal(await petJs('document.body.classList.contains("music-playing")'),true,'size changes keep the music visual separate');
+  assert.equal(await petJs('Number(document.querySelector(".music-cg").dataset.danceAngle)'),0,'75% scale avoids rotating delicate outlines');
+  const compactFrames=[];
+  for(let n=0;n<12;n++){compactFrames.push(await petJs('(()=>{const m=new DOMMatrix(getComputedStyle(document.querySelector(".music-cg")).transform);return [m.e*devicePixelRatio,m.f*devicePixelRatio];})()'));await pause(30);}
+  assert.ok(compactFrames.some(p=>p.some(v=>Math.abs(v-Math.round(v))>.05)),'compact movement is not pixel-quantized');
+  assert.ok(new Set(compactFrames.map(p=>p.join(','))).size>=10,'compact frames move continuously');
+  await good('petSettings.save({scale:1})');
+  pet.webContents.debugger.attach('1.3');
+  await pet.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});await pause(100);
+  assert.equal(await petJs('document.querySelector(".music-cg").style.transform'),'translate(0px, 0px) rotate(0deg)');
+  await pet.webContents.debugger.sendCommand('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  pet.webContents.debugger.detach();
+  await good('petSettings.save({scale:.75})');await pause(100);
+  // Record the live image and the actual audio-driven DOM transform, not a second animation implementation.
+  const movie=await petJs(`new Promise(resolve=>{
+    const c=document.createElement('canvas');c.width=480;c.height=360;const g=c.getContext('2d'),img=document.querySelector('.music-cg');
+    const stream=c.captureStream(30),rec=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp9'}),chunks=[];
+    rec.ondataavailable=e=>chunks.push(e.data);rec.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());const data=new Uint8Array(await new Blob(chunks).arrayBuffer());let binary='';for(const v of data)binary+=String.fromCharCode(v);resolve(btoa(binary));};
+    const timer=setInterval(()=>{g.fillStyle='#102045';g.fillRect(0,0,c.width,c.height);const m=new DOMMatrix(getComputedStyle(img).transform);g.save();g.translate(240,180);g.scale(.75,.75);g.transform(m.a,m.b,m.c,m.d,m.e,m.f);g.drawImage(img,-122.5,-122.5,245,245);g.restore();},1000/30);
+    rec.start();setTimeout(()=>{clearInterval(timer);rec.stop();},3400);
+  })`);
+  fs.writeFileSync(path.join(run,'glowstick-dance.webm'),Buffer.from(movie,'base64'));
+  await good('petSettings.save({scale:1})');
+  clock=300500;idle=0;await eventually(()=>assert.equal(controller.snapshot().playing,false));
+  await eventually(async()=>assert.equal(await petJs('document.querySelector(".idle-song-note").hidden'),true));
+  assert.equal(await petJs('document.body.classList.contains("music-playing")'),false,'stop restores original pose');
+  assert.equal(await petJs('document.querySelector(".music-cg").style.transform'),'none');
+  await pause(100);assert.equal(await petJs('document.querySelector(".music-cg").dataset.danceTime'),undefined,'stopped RAF cannot leak into next pose');
+  await good('petSettings.previewSong()');await eventually(async()=>assert.equal(await petJs('document.querySelector(".idle-song-note").hidden'),false));
+  powerMonitor.emit('lock-screen');assert.equal(controller.snapshot().playing,false);powerMonitor.emit('unlock-screen');
+  await good('petSettings.previewSong()');await good('petSettings.stopSong()');assert.equal(controller.snapshot().playing,false);
+  await good('petSettings.previewSong()');await eventually(async()=>assert.equal(await petJs('document.body.classList.contains("music-playing")'),true));
+  const grip=await petJs(`(()=>{const el=document.querySelector('.music-cg'),r=el.getBoundingClientRect(),a=Number(el.dataset.danceAngle)*Math.PI/180,dx=(285/1254-.5)*245,dy=(575/1254-.5)*245;return {x:r.x+r.width/2+dx*Math.cos(a)-dy*Math.sin(a),y:r.y+r.height/2+dx*Math.sin(a)+dy*Math.cos(a)};})()`);
+  assert.equal(await petJs(`characterContains(${grip.x},${grip.y})`),true,'outstretched glowstick hand is interactive');
+  pet.webContents.sendInputEvent({type:'mouseDown',x:Math.round(grip.x),y:Math.round(grip.y),button:'left',clickCount:1});
+  await pause(80);
+  assert.equal(await petJs('Boolean(pointerStart)'),true,'click is captured before dance is hidden');
+  assert.equal(await petJs('document.body.classList.contains("music-playing")'),false,'touch stops music/dance before dragging');
+  pet.webContents.sendInputEvent({type:'mouseUp',x:Math.round(grip.x),y:Math.round(grip.y),button:'left',clickCount:1});
+  await good('petSettings.previewSong()');await eventually(async()=>assert.equal(await petJs('document.body.classList.contains("music-playing")'),true));
+  await petJs('qaSong.currentTime=qaSong.duration-.08');
+  await eventually(()=>assert.equal(controller.snapshot().playing,false));
+  assert.equal(await petJs('document.body.classList.contains("music-playing")'),false,'natural song ending restores pose');
+  const invalid=path.join(run,'bad.mp3');fs.writeFileSync(invalid,'not audio');dialog.showOpenDialog=async()=>({canceled:false,filePaths:[invalid]});
+  assert.equal((await js('petSettings.importSong()')).ok,false);
+  assert.equal((await good('petSettings.get()')).preferences.idleSongFile,imported.snapshot.preferences.idleSongFile,'bad import preserves previous song');
+  assert.equal(fs.readdirSync(path.join(run,'runtime/custom-audio')).length,1,'failed new import cleaned up only its temporary copy');
+  await good('petSettings.save({idleSongMode:"pet"})');clock+=300000;idle=0;
+  await eventually(()=>assert.equal(controller.snapshot().playing,true));
+  await petJs('window.whalePet.idleSongActivity()');await eventually(()=>assert.equal(controller.snapshot().playing,false));
+  await good('petSettings.save({idleSongEnabled:false})');clock+=600000;idle=900;await pause(650);assert.equal(controller.snapshot().playing,false);
+  const sendState=state=>new Promise(resolve=>{const s=require('node:dgram').createSocket('udp4');s.send(Buffer.from(JSON.stringify({type:'whalepet-state',provider:'chatgpt',state,message:'music test',nonce:String(Math.random())})),Number(process.env.WHALEPET_BRIDGE_PORT),'127.0.0.1',()=>{s.close();resolve();});});
+  await sendState('idle');await eventually(async()=>assert.equal((await good('petSettings.get()')).renderedState,'idle'));
+  await good('petSettings.save({idleSongEnabled:true,idleSongMode:"ai"})');await pause(600);
+  clock+=299000;idle=0;await pause(650);assert.equal(controller.snapshot().playing,false);
+  clock+=1000;await eventually(()=>assert.equal(controller.snapshot().playing,true));
+  assert.equal(idle,0,'GPT idle music does not require keyboard/mouse idleness');
+  await sendState('thinking');await eventually(()=>assert.equal(controller.snapshot().playing,false));
+  clock+=600000;await pause(650);assert.equal(controller.snapshot().playing,false,'busy GPT cannot sing');
+  await sendState('idle');await eventually(async()=>assert.equal((await good('petSettings.get()')).renderedState,'idle'));await pause(600);
+  clock+=300000;await eventually(()=>assert.equal(controller.snapshot().playing,true));
+  controller.stop();clock+=300000;await pause(650);assert.equal(controller.snapshot().playing,false,'manual stop consumes this GPT idle episode');
+  await good('petSettings.previewSong()');await eventually(async()=>assert.equal(await petJs('document.body.classList.contains("music-playing")'),true));
+  const disabled=await good('petSettings.disableSong()');assert.equal(disabled.preferences.idleSongEnabled,false);assert.equal(controller.snapshot().playing,false);
+  await eventually(async()=>assert.equal(await petJs('document.body.classList.contains("music-playing")'),false));
+  assert.equal(require('../preferences').readPreferences(path.join(run,'runtime/preferences.json')).idleSongEnabled,false,'off persists for next launch');
+  clock+=600000;await pause(650);assert.equal(controller.snapshot().playing,false);
+  await good('petSettings.save({idleSongEnabled:true})');await good('petSettings.previewSong()');emergencyMute();
+  assert.equal(controller.snapshot().playing,false);assert.equal((await good('petSettings.get()')).preferences.idleSongEnabled,false,'emergency shortcut disables rather than toggles');
+  const oldBuild=Menu.buildFromTemplate;let menu;
+  Menu.buildFromTemplate=template=>(menu=template,{popup(){}});
+  await petJs('window.whalePet.openContextMenu()');await eventually(()=>assert.ok(menu));Menu.buildFromTemplate=oldBuild;
+  assert.equal(menu.find(item=>item.label==='允许待机偷偷唱歌').checked,false);
+  assert.ok(menu.find(item=>item.label.startsWith('关闭自动唱歌')));
+  assert.equal((await good('petSettings.get()')).musicMuteShortcut,false,'shortcut conflict has an honest fallback');
+  if(process.env.WHALEPET_TEST_SONG_HTML) {
+    dialog.showOpenDialog=async()=>({canceled:false,filePaths:[process.env.WHALEPET_TEST_SONG_HTML]});
+    const actual=await good('petSettings.importSong()');
+    assert.match(actual.snapshot.preferences.idleSongFile,/\.m4a$/);
+    await good('petSettings.save({idleSongMode:"system"})');
+    await good('petSettings.previewSong()');await eventually(async()=>assert.equal(await petJs('document.querySelector(".idle-song-note").hidden'),false));
+    await good('petSettings.stopSong()');
+    console.log('Provided HTML embedded M4A extracted, decoded and played muted: '+actual.snapshot.preferences.idleSongName);
+  }
+  console.log('Idle music integration passed: local media decode/playback (muted), import/cancel/reject, 299/300 seconds, GPT idle while user active, GPT busy stops, pet/system modes, lock, preview/stop, preferences and compact UI.');
+  console.log('Artifacts: '+run);app.quit();
+}).catch(e=>{console.error(e);app.exit(1);});
+setTimeout(()=>app.exit(1),75000).unref();

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'none'; media-src 'self' file:">
   <title>小鲸的控制室</title><link rel="stylesheet" href="settings.css">
 </head>
 <body>
@@ -12,6 +12,7 @@
     <nav aria-label="设置分类">
       <button class="nav-item active" data-tab="appearance" aria-current="page"><span>◒</span>外观与大小</button>
       <button class="nav-item" data-tab="poses"><span>▧</span>姿势图片</button>
+      <button class="nav-item" data-tab="music"><span>♫</span>摸鱼小曲</button>
       <button class="nav-item" data-tab="connections"><span>⌘</span>AI 接入</button>
     </nav>
     <div class="sidebar-bottom"><span class="local-dot"></span>只保存在这台电脑<small>你的图片不会上传到网络。</small><button class="text-button" id="resetAll">恢复默认外观</button></div>
@@ -22,12 +23,32 @@
       <div class="appearance-grid">
         <div class="preview-card"><span class="pill">外观预览</span><div class="preview-stage" id="appearanceStage"><img id="appearancePet" src="assets/whalepet-v015/idle.webp" alt="待机姿势预览"></div><strong id="sizeCaption">100% · 默认大小</strong><p>桌面上的小鲸会同步调整</p><div class="swatches" aria-label="预览背景"><button data-bg="sky" class="sky selected" aria-label="浅蓝背景" aria-pressed="true"></button><button data-bg="dark" class="dark" aria-label="深色背景" aria-pressed="false"></button><button data-bg="checker" class="checker" aria-label="棋盘透明背景" aria-pressed="false"></button></div></div>
         <div class="controls-column">
-          <div class="card"><div class="card-title"><h2>桌宠大小</h2><output id="scaleValue" for="scale">100%</output></div><label class="sr-only" for="scale">桌宠大小</label><input type="range" min="65" max="150" step="5" value="100" id="scale"><div class="range-labels"><span>小巧 65%</span><span>醒目 150%</span></div><div class="presets"><button data-scale="0.75">75%</button><button data-scale="1">100%</button><button data-scale="1.25">125%</button><button data-scale="1.5">150%</button></div><p class="hint">松开滑块后生效，等比例缩放，不改变姿势。</p></div>
+          <div class="card"><div class="card-title"><h2>桌宠大小</h2><output id="scaleValue" for="scale">100%</output></div><label class="sr-only" for="scale">桌宠大小</label><input type="range" min="65" max="150" step="1" value="100" id="scale"><div class="range-labels"><span>小巧 65%</span><span>醒目 150%</span></div><div class="precise-input"><label for="scaleNumber">精确大小</label><input type="number" id="scaleNumber" min="65" max="150" step="1" value="100"><span>%</span></div><div class="presets"><button data-scale="0.75">75%</button><button data-scale="1">100%</button><button data-scale="1.25">125%</button><button data-scale="1.5">150%</button></div><p class="hint">每次可调 1%。滑块松开、数字按回车或离开输入框时保存；不改变姿势。</p></div>
           <div class="card"><label class="toggle-row"><span><strong>状态标签</strong><small>显示 AI 名称与当前动作</small></span><input type="checkbox" id="showBadge" role="switch" checked></label><label class="toggle-row"><span><strong>对话气泡</strong><small>显示工作提示和小鲸的回应</small></span><input type="checkbox" id="showSpeech" role="switch" checked></label></div>
+          <div class="card"><div class="card-title"><h2>任务泡泡微调</h2><button class="quiet-button" id="resetBubbles">只还原泡泡</button></div><fieldset id="bubbleControls"><label class="adjust-label" for="bubbleScale">相对大小 <output id="bubbleScaleValue" for="bubbleScale">100%</output></label><input type="range" id="bubbleScale" min="80" max="120" step="1" value="100"><div class="range-labels"><span>更小 80%</span><span>更清晰 120%</span></div><label class="adjust-label" for="bubbleOffset">上下位置 <output id="bubbleOffsetValue" for="bubbleOffset">默认</output></label><input type="range" id="bubbleOffset" min="-20" max="30" step="1" value="0"><div class="range-labels"><span>向上 · 远一点</span><span>向下 · 近一点</span></div></fieldset><p class="hint">仍随小鲸同比缩放，在此基础上微调；只影响上方任务泡泡。关闭气泡时保留这些设置。较大泡泡向下移动时，请留意是否挡住头顶。</p></div>
           <div class="card"><label class="toggle-row"><span><strong>待机微动作</strong><small>轻轻眨眼、摆尾；仅默认待机图生效<br>85% 及以下暂停浮动与摆尾，减少闪烁<br>遵循系统“减少动态效果”设置</small></span><input type="checkbox" id="idleLife" role="switch" checked></label></div>
           <p class="shortcut-hint">找不到小鲸？按 <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>W</kbd><br>就能把她带回屏幕角落。</p>
         </div>
       </div>
+    </section>
+    <section id="music" class="page" hidden>
+      <header><p class="eyebrow">A LITTLE SECRET</p><h1>GPT 歇一会，她就偷偷唱。</h1><p>GPT 连续待机 5 分钟，小鲸悄悄放一首摸鱼小曲。</p></header>
+      <div class="card">
+        <label class="toggle-row"><span><strong>允许自动唱歌</strong><small>关闭后立即停歌，并保持关闭；重启或换歌不会自动开启</small></span><input type="checkbox" id="idleSongEnabled" role="switch"></label>
+        <div class="presets"><button id="disableSong">安静模式 · 停止并关闭自动唱歌</button></div>
+        <p class="hint" id="musicMuteHint">右键小鲸也能关闭自动唱歌；课堂、会议前请先关闭。</p>
+        <label class="field-label" for="idleSongMode">什么时候算静置？</label>
+        <select id="idleSongMode"><option value="ai">GPT 连续处于待机状态 5 分钟（默认）</option><option value="system">整台电脑没有键鼠操作 5 分钟</option><option value="pet">没有点击或拖动小鲸 5 分钟</option></select>
+        <p class="hint">GPT 模式：跟随已接入的 ChatGPT / Codex 状态；开始工作就停，你可以继续操作电脑。点小鲸也能停止。未接入的 ChatGPT 网页状态无法检测。重新启用或更换设置后重新计时。</p>
+      </div>
+      <div class="card">
+        <div class="card-title"><h2>她的小曲</h2><span>♫</span></div>
+        <p id="songName">还没有导入音频</p><p class="hint" id="songStatus" aria-live="polite"></p>
+        <div class="presets"><button class="primary" id="importSong">导入歌曲</button><button id="previewSong">试听（会出声）</button><button id="stopSong">只停这一首</button></div>
+        <p class="hint">支持音频或内嵌音频的 LetMeGo HTML，≤ 30 MB、≤ 10 分钟。HTML 只提取音频，不运行页面脚本；只保存在本机。</p>
+        <button class="text-button" id="songSource">在 B 站打开《LetMeGo》来源 ↗</button>
+      </div>
+      <div class="card"><div class="card-title"><label for="idleSongVolume">轻轻唱的音量</label><output id="songVolumeValue" for="idleSongVolume">18%</output></div><input type="range" id="idleSongVolume" min="0" max="50" step="1" value="18"><p class="hint">默认 18%，开始时慢慢变响，最多 50%。不改变电脑系统音量。试听后请点击停止；恢复操作停止规则仅用于自动播放。</p></div>
     </section>
     <section id="poses" class="page" hidden>
       <header><p class="eyebrow">A WARDROBE OF EXPRESSIONS</p><h1>每个动作，都可以有你的风格。</h1><p>逐个替换静态姿势，不影响现有拖动与转场。</p></header>
@@ -40,7 +61,7 @@
         <label class="toggle-row" id="followRow"><span><strong>自动跟随本机 Codex</strong><small>读取新增任务事件，不读取登录凭据</small></span><input type="checkbox" id="autoFollow" role="switch"></label>
         <div id="customNameRow" hidden><label class="field-label" for="customLabel">桌面标签名称</label><div class="input-action"><input id="customLabel" maxlength="20" placeholder="例如：Claude"><button id="saveName">保存名称</button></div><p class="hint">名称只用于显示；需要下方的适配代码发送实际状态。</p></div>
       </div>
-      <div class="card live-card"><div><span class="live-dot" id="liveDot"></span><strong id="connectionStatus">正在读取状态…</strong><p id="connectionDetail" class="hint"></p></div><button id="refresh" class="quiet-button">刷新</button></div>
+      <div class="card live-card"><div><span class="live-dot" id="liveDot"></span><strong id="connectionStatus">正在读取状态…</strong><p id="connectionDetail" class="hint"></p><p class="hint">姿势卡住时，可重新读取本地任务日志；不重启小鲸，不修改对话或外观。日志仍在等待回答时会保留提醒。</p><button id="reloadCodex" class="quiet-button">重新读取 Codex 状态</button></div><button id="refresh" class="quiet-button">更新显示</button></div>
       <details class="card integration-guide" id="integrationGuide"><summary>通用接入指南 <span>本地接口 · 无需 API 密钥</span></summary><p>在你的 AI 工具或脚本中，开始思考、调用工具和完成时发送相应状态。仅修改名称或打开网页不会自动接入。</p><div class="endpoint"><span>UDP · 仅本机</span><code id="endpoint"></code></div><div class="code-heading"><h3>Python 最小示例</h3><button id="copyPython" class="quiet-button">复制代码</button></div><pre id="pythonExample" tabindex="0"></pre><p class="hint">此示例仅发送一次“思考”。真正自动跟随需要在 AI 的事件回调中发送状态；消息不包含提示词或回复正文。</p><div class="code-heading"><h3>支持的状态</h3><button id="copyPacket" class="quiet-button">复制 JSON 消息</button></div><code id="stateNames" class="state-names"></code><p class="hint">也可由本机程序更新这个 JSON 状态文件：</p><code id="stateFile" class="file-path"></code></details>
     </section>
     <footer><span id="saveStatus" role="status" aria-live="polite">更改后自动保存</span><span>保留原作 · 随时还原</span></footer>

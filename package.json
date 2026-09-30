@@ -1,11 +1,14 @@
 {
   "name": "whalepet-desktop",
   "productName": "WhalePet Desktop",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "private": true,
   "description": "Standalone Windows desktop pet with local work-state frame animation",
   "main": "main.js",
   "scripts": {
+    "test:multi-chat": "node tests/reload-state.js && node tests/stale-task-state.js && node tests/bubble-lifecycle.js && node tests/multi-conversation.js && node tests/codex-state-follower.js && electron tests/multi-conversation-runtime.js",
+    "test:idle-song": "node tests/idle-song.js && electron tests/idle-song-runtime.js",
+    "test:music-dance": "node --check idle-song-player.js && node tests/music-dance.js && electron tests/music-cg-assets.js && electron tests/idle-song-runtime.js",
     "start": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check pet.js && node --check idle-life.js && node --check drag-physics.js && node --check state-schema.js && node --check set-whalepet-state.js && node --check codex-state-follower.js && node --check preferences.js && node --check settings-window.js && node --check settings-preload.js && node --check settings.js",
     "test:drag": "node tests/drag-soak.js",

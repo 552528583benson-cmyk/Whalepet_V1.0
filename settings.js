@@ -5,12 +5,16 @@ const names={idle:'待机',thinking:'思考中',reading:'阅读文件',searching
 function notify(message,error=false){clearTimeout(toastTimer);$('#toast').textContent=message;$('#toast').classList.toggle('error',error);$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,error?9000:4200);}
 async function call(promise){const result=await promise;if(!result.ok)throw new Error(result.error||'操作未完成，请重试');return result.value;}
 function action(fn){const run=async()=>{busy=true;$('#saveStatus').textContent='正在处理…';try{await fn();$('#saveStatus').textContent='更改已保存在本机';}catch(e){notify(e.message,true);$('#saveStatus').textContent='操作未完成，请重试';}finally{busy=false;}};actionQueue=actionQueue.then(run,run);return actionQueue;}
-function tab(name){if(!['appearance','poses','connections'].includes(name))name='appearance';if(snapshot?.providerLocked&&name==='connections')name='appearance';document.querySelectorAll('.page').forEach(p=>p.hidden=p.id!==name);document.querySelectorAll('[data-tab]').forEach(b=>{const active=b.dataset.tab===name;b.classList.toggle('active',active);if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});$('main').scrollTop=0;}
+function tab(name){if(!['appearance','poses','music','connections'].includes(name))name='appearance';if(snapshot?.providerLocked&&name==='connections')name='appearance';document.querySelectorAll('.page').forEach(p=>p.hidden=p.id!==name);document.querySelectorAll('[data-tab]').forEach(b=>{const active=b.dataset.tab===name;b.classList.toggle('active',active);if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});$('main').scrollTop=0;}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>tab(b.dataset.tab)));
 window.petSettings.onTab(tab);
 function scaleLabels(value){$('#scaleValue').textContent=value+'%';$('#sizeCaption').textContent=value+'%'+(Number(value)===100?' · 默认大小':' · 等比例显示');document.querySelectorAll('[data-scale]').forEach(b=>b.classList.toggle('selected',Math.round(Number(b.dataset.scale)*100)===Number(value)));}
 function showStatus(){
+  const song=snapshot.idleSong||{};
+  $('#songStatus').textContent=song.error||(song.playing?'♫ 小鲸正在唱歌':song.available?(snapshot.preferences.idleSongEnabled?'已准备好 · 静置满 5 分钟唱一次':'已导入 · 自动播放已关闭'):'需要先导入本地歌曲文件');
+  $('#previewSong').disabled=!song.available;$('#stopSong').disabled=!song.playing;
   const auto=snapshot.provider==='chatgpt'&&snapshot.autoFollowCodex;
+  $('#reloadCodex').disabled=!auto||snapshot.providerLocked;
   const freshAuto=auto&&snapshot.follower.status==='following';
   const time=auto?snapshot.follower.lastEventAt:snapshot.lastReceivedAt;
   const fresh=!!time&&Date.now()-time<60000;
@@ -21,7 +25,15 @@ function showStatus(){
 function render(){
   const p=snapshot.preferences;
   $('#scale').value=Math.round(p.scale*100);scaleLabels(Math.round(p.scale*100));
+  if(document.activeElement!==$('#scaleNumber'))$('#scaleNumber').value=Math.round(p.scale*100);
+  $('#bubbleScale').value=Math.round((p.bubbleScale||1)*100);
+  $('#bubbleOffset').value=p.bubbleOffset||0;bubbleLabels();
+  $('#bubbleControls').disabled=!p.showSpeech;
   $('#showBadge').checked=p.showBadge;$('#showSpeech').checked=p.showSpeech;$('#idleLife').checked=p.idleLife!==false;
+  $('#idleSongEnabled').checked=p.idleSongEnabled;$('#idleSongMode').value=p.idleSongMode;
+  $('#idleSongVolume').value=Math.round(p.idleSongVolume*100);$('#songVolumeValue').textContent=Math.round(p.idleSongVolume*100)+'%';
+  $('#songName').textContent=p.idleSongName||'还没有导入音频';
+  $('#musicMuteHint').textContent=snapshot.musicMuteShortcut?'快捷键 Ctrl + Alt + M：立即停歌并关闭自动唱歌。重新开启需手动操作。':'右键小鲸 → 关闭自动唱歌。紧急静音快捷键当前不可用（可能被其他程序占用）。';
   $('#appearancePet').src=snapshot.poses[0].url;
   $('#provider').value=snapshot.provider;$('#provider').disabled=snapshot.providerLocked;
   $('[data-tab="connections"]').hidden=snapshot.providerLocked;
@@ -51,8 +63,31 @@ function render(){
 function save(patch){return action(async()=>{snapshot=await call(window.petSettings.save(patch));render();});}
 $('#scale').addEventListener('input',e=>scaleLabels(e.target.value));
 $('#scale').addEventListener('change',e=>save({scale:Number(e.target.value)/100}));
+$('#scaleNumber').addEventListener('change',e=>{
+  if(!e.target.checkValidity()||e.target.value===''){notify('请输入 65 到 150 之间的整数。',true);return;}
+  save({scale:Number(e.target.value)/100});
+});
+$('#scaleNumber').addEventListener('keydown',e=>{if(e.key==='Enter')e.target.blur();});
+function bubbleLabels(){
+  $('#bubbleScaleValue').textContent=$('#bubbleScale').value+'%';
+  const offset=Number($('#bubbleOffset').value);
+  $('#bubbleOffsetValue').textContent=offset===0?'默认':`${offset>0?'下移':'上移'} ${Math.abs(offset)}`;
+}
+for(const id of ['bubbleScale','bubbleOffset']){
+  $('#'+id).addEventListener('input',bubbleLabels);
+  $('#'+id).addEventListener('change',e=>save({[id]:Number(e.target.value)/(id==='bubbleScale'?100:1)}));
+}
+$('#resetBubbles').onclick=()=>save({bubbleScale:1,bubbleOffset:0});
 document.querySelectorAll('[data-scale]').forEach(b=>b.onclick=()=>save({scale:Number(b.dataset.scale)}));
-for(const id of ['showBadge','showSpeech','idleLife'])$('#'+id).onchange=e=>save({[id]:e.target.checked});
+for(const id of ['showBadge','showSpeech','idleLife','idleSongEnabled'])$('#'+id).onchange=e=>save({[id]:e.target.checked});
+$('#idleSongMode').onchange=e=>save({idleSongMode:e.target.value});
+$('#idleSongVolume').oninput=e=>$('#songVolumeValue').textContent=e.target.value+'%';
+$('#idleSongVolume').onchange=e=>save({idleSongVolume:Number(e.target.value)/100});
+$('#importSong').onclick=()=>action(async()=>{const result=await call(window.petSettings.importSong());if(result.cancelled)return;snapshot=result.snapshot;render();notify(snapshot.preferences.idleSongEnabled?'歌曲已导入，从现在开始重新计时。':'歌曲已导入；自动唱歌仍然关闭，需要时手动开启。');});
+$('#disableSong').onclick=()=>action(async()=>{snapshot=await call(window.petSettings.disableSong());render();notify('已安静下来。自动唱歌已关闭，重启后也不会自行开启。');});
+$('#previewSong').onclick=()=>action(async()=>{await call(window.petSettings.previewSong());snapshot=await call(window.petSettings.get());showStatus();});
+$('#stopSong').onclick=()=>action(async()=>{await call(window.petSettings.stopSong());snapshot=await call(window.petSettings.get());showStatus();});
+$('#songSource').onclick=()=>action(async()=>{await call(window.petSettings.openSongSource());});
 $('#provider').onchange=e=>save({provider:e.target.value});
 $('#autoFollow').onchange=e=>save({autoFollowCodex:e.target.checked});
 $('#saveName').onclick=()=>save({customLabel:$('#customLabel').value});
@@ -60,6 +95,11 @@ $('#resetAll').onclick=()=>action(async()=>{const result=await call(window.petSe
 $('#copyPython').onclick=()=>action(async()=>{await call(window.petSettings.copy('python'));notify('Python 接入示例已复制');});
 $('#copyPacket').onclick=()=>action(async()=>{await call(window.petSettings.copy('packet'));notify('JSON 消息已复制');});
 $('#refresh').onclick=()=>action(async()=>{snapshot=await call(window.petSettings.get());render();});
+$('#reloadCodex').onclick=()=>action(async()=>{
+  const button=$('#reloadCodex');button.disabled=true;button.textContent='正在重新读取…';
+  try{snapshot=await call(window.petSettings.reloadCodex());render();notify('已重新读取 Codex 状态，并同步小鲸姿势。');}
+  finally{button.textContent='重新读取 Codex 状态';showStatus();}
+});
 document.querySelectorAll('[data-bg]').forEach(b=>b.onclick=()=>{$('#appearanceStage').className='preview-stage bg-'+b.dataset.bg;document.querySelectorAll('[data-bg]').forEach(s=>{s.classList.toggle('selected',s===b);s.setAttribute('aria-pressed',String(s===b));});});
 window.petSettings.get().then(callResult=>{if(!callResult.ok)throw new Error(callResult.error);snapshot=callResult.value;render();tab(new URLSearchParams(location.search).get('tab')||'appearance');}).catch(e=>notify(e.message,true));
 setInterval(async()=>{if(busy||document.hidden||!snapshot)return;try{const next=await call(window.petSettings.get());const changed=next.provider!==snapshot.provider||next.autoFollowCodex!==snapshot.autoFollowCodex||JSON.stringify(next.preferences)!==JSON.stringify(snapshot.preferences);snapshot=next;if(changed)render();else showStatus();}catch{/* Explicit refresh reports persistent failures. */}},2500);

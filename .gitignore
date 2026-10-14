@@ -10,3 +10,17 @@ work/*
 .env.*
 auth.json
 .DS_Store
+tmp/
+references/
+harness-profile/
+*.onnx
+*.jsonl
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.flac
+*.pem
+*.key
+tokens.json
+vendor/cubism/

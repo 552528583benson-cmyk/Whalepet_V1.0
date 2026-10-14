@@ -23,7 +23,7 @@ async function expectPose(type, payload, expected) {
   let actual;
   while (Date.now() < deadline) {
     await pause(250);
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = BrowserWindow.getAllWindows().find(window=>window.webContents.getURL().endsWith('index.html'));
     actual = await window.webContents.executeJavaScript("window.whalePetController?.getState()?.state").catch(() => null);
     if (actual === expected) { console.log(`Event -> rendered posture: ${expected}`); return; }
   }

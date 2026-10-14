@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, Menu, screen, shell, dialog } = require("electron");
+const { app, BrowserWindow, globalShortcut, ipcMain, Menu, Tray, screen, shell, dialog, powerMonitor } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const dgram = require("dgram");
@@ -6,6 +6,11 @@ const { CodexStateFollower, priority } = require("./codex-state-follower");
 const { POSES, readPreferences, writePreferences, normalizePreferences } = require('./preferences');
 const { createSettingsController } = require('./settings-window');
 const { createIdleSongController } = require('./idle-song');
+const { createUserActivity, normalizeGames } = require('./user-activity');
+const { createBuddyPolicy } = require('./buddy-policy');
+const { createRecoveryController } = require('./recovery-window');
+const { createEdgeTravelController } = require('./edge-travel-window');
+const AHOGE_PULL = require('./ahoge-pull-assets');
 const {
   STATES: STATE_NAMES,
   VALID_STATES,
@@ -40,11 +45,14 @@ let providerLocked = false;
 let windowStateFile = "";
 let mouseInteractive = true;
 let petHidden = false;
+let hideStage='normal',hiddenHome=null,edgeGeneration=0,edgeTransitionPromise=null;
+let peekPull=null,peekPullTimer=null;
 let dragCursor = null;
 let dragTimer = null;
 let dragRoom = null;
 let dragSession = null;
 let boundsGuardTimer = null;
+let cursorProbeTimer = null, cursorProbeInside = false;
 let mouseModeStabilizeTimer = null;
 let repairingBounds = false;
 let expectedOuterSize = null;
@@ -56,8 +64,21 @@ let followStatus = { status: "starting" };
 let renderedState = null;
 let preferences = normalizePreferences();
 let settingsController = null;
+let recoveryController = null;
+let edgeTravelController = null;
+let reloadStatusPromise=null,reloadSequence=0,reloadReceipt=null;
+let reloadDisplay=null;
 let idleSongController = null;
 let musicMuteShortcut = false;
+let providerShortcut = false;
+let petTray = null;
+let trayRefreshTimer = null;
+let lastTrayValue = '';
+const companionShortcuts = {visibility:false,corner:false};
+const buddyPolicy = createBuddyPolicy();
+let userActivity = null, buddyTimer = null, lastBuddyValue = '', renderedBuddyMode = 'none';
+let buddyLocked = false, buddySuspended = false;
+const buddyPowerHandlers = {};
 let preferencesRevision = 0;
 const lastBridgeEvents = {};
 const stateWatchListener = () => readStateFile();
@@ -77,7 +98,7 @@ function applyPetSize() {
   if(!petWindow || petWindow.isDestroyed()) return;
   stopDragTracking();
   const before=petWindow.getBounds();
-  const logical={x:before.x+(dragRoom?.left||0),y:before.y+(dragRoom?.top||0)};
+  const logical=hiddenHome||{x:before.x+(dragRoom?.left||0),y:before.y+(dragRoom?.top||0)};
   repairingBounds=true;
   try {
     petWindow.webContents.setZoomFactor(preferences.scale);
@@ -97,9 +118,70 @@ function saveAppearance(patch) {
   const previousScale=preferences.scale;
   preferences=writePreferences(getRuntimeFile('preferences.json'),{...preferences,...patch});
   preferencesRevision++;
+  if(previousScale!==preferences.scale&&peekPull)cancelEdgeMotion();
   if(previousScale!==preferences.scale) applyPetSize();
+  if(previousScale!==preferences.scale&&['hiding','emerging'].includes(hideStage)){
+    const emerging=hideStage==='emerging';cancelEdgeMotion();
+    if(emerging)finishShowingPet();else settleHiddenPet();
+  }
+  recoveryController?.refresh();
   petWindow?.webContents.send('pet:preferences',rendererPreferences());
   if(Object.keys(patch).some(key=>key.startsWith('idleSong')))idleSongController?.changed();
+  if(Object.keys(patch).some(key=>['typingCompanion','gameCompanion','games'].includes(key)))configureBuddyMonitoring();
+  updatePetTray();
+}
+
+function buddyRequest() {
+  const value=buddyPolicy.snapshot({hidden:petHidden||buddyLocked||buddySuspended});
+  // Neither key codes nor activity counts cross into the renderer/diagnostics.
+  return {mode:value.mode,tempo:Math.round(value.tempo*100)/100};
+}
+
+function publishBuddy(force=false) {
+  const value=buddyRequest(), signature=JSON.stringify(value);
+  if(!force&&signature===lastBuddyValue)return;
+  const previousMode=lastBuddyValue?JSON.parse(lastBuddyValue).mode:'none';
+  lastBuddyValue=signature;
+  if(value.mode!=='none'&&previousMode==='none')idleSongController?.activity();
+  if(petWindow&&!petWindow.isDestroyed())petWindow.webContents.send('pet:buddy',value);
+}
+
+function configureBuddyMonitoring() {
+  buddyPolicy.configure(preferences);
+  if(userActivity) {
+    const enabled=preferences.typingCompanion||preferences.gameCompanion&&preferences.games.length>0;
+    if(petHidden||buddyLocked||buddySuspended||!enabled) {
+      userActivity.stop();buddyPolicy.clearActivity();
+    } else userActivity.start({typing:preferences.typingCompanion,games:preferences.gameCompanion?preferences.games:[]});
+  }
+  publishBuddy(true);
+}
+
+function setupBuddy() {
+  userActivity=createUserActivity({
+    onActivity:value=>{buddyPolicy.activity(value);publishBuddy();},
+    onStatus:value=>{
+      if(!['starting','running'].includes(value.state))buddyPolicy.clearActivity();
+      publishBuddy();updatePetTray();
+    }
+  });
+  for(const [event,change] of Object.entries({
+    'lock-screen':()=>{buddyLocked=true;},'unlock-screen':()=>{buddyLocked=false;},
+    suspend:()=>{buddySuspended=true;},resume:()=>{buddySuspended=false;}
+  })) {
+    buddyPowerHandlers[event]=()=>{change();if((buddyLocked||buddySuspended)&&peekPull)cancelEdgeMotion();configureBuddyMonitoring();};
+    powerMonitor.on(event,buddyPowerHandlers[event]);
+  }
+  configureBuddyMonitoring();
+  buddyTimer=setInterval(publishBuddy,100);
+}
+
+function companionSnapshot() {
+  return {hidden:petHidden,hideStage,pullActive:Boolean(peekPull),trayAvailable:Boolean(petTray),
+    ...(recoveryController?.snapshot()||{recoveryAvailable:false,recoveryVisible:false}),
+    shortcuts:{...companionShortcuts},
+    buddy:{mode:renderedBuddyMode,requestedMode:buddyRequest().mode,manualGame:buddyPolicy.snapshot().manualGame,
+      monitor:userActivity?.getStatus()||{state:'stopped',reason:null,available:false}}};
 }
 
 function settingsSnapshot() {
@@ -110,9 +192,12 @@ function settingsSnapshot() {
     preferences:{...preferences,images:{...preferences.images}},
     idleSong:idleSongController?.snapshot()||{available:false,playing:false,error:''},
     musicMuteShortcut,
+    companion:companionSnapshot(),
     poses:POSES.map(([state,label,filename])=>({state,label,custom:Boolean(rendered.images[filename]),url:rendered.images[filename]||`assets/whalepet-hd/${filename.replace(/\.webp$/,'.png')}`})),
     provider,providerLocked,autoFollowCodex:autoFollow,follower:followStatus,
-    state:currentState.state,renderedState,lastReceivedAt:lastBridgeEvents[provider]||null,
+    state:currentState.state,renderedState,reloadDisplay,
+    activeConversation:codexConversations().find(item=>item.primary)||null,
+    lastReceivedAt:lastBridgeEvents[provider]||null,
     endpoint:`127.0.0.1:${Number(process.env.WHALEPET_BRIDGE_PORT)||BRIDGE_PORT}`,
     stateFile:getStateFile(provider),
     snippets:{
@@ -127,6 +212,25 @@ function setupSettings() {
   settingsController=createSettingsController({
     snapshot:settingsSnapshot,imageDirectory:getRuntimeFile('custom-images'),preview:setPreviewState,
     reloadCodex:reloadCodexStatus,
+    gameMode:enabled=>{buddyPolicy.setManualGame(enabled);publishBuddy(true);return settingsSnapshot();},
+    previewBuddy:()=>{buddyPolicy.previewTyping();publishBuddy(true);return settingsSnapshot();},
+    addGame:name=>{
+      const names=normalizeGames([name]);
+      if(!names.length)throw new Error('这个游戏文件名暂不支持，请选择游戏本体的 .exe。');
+      if(preferences.games.length>=32&&!preferences.games.includes(names[0]))throw new Error('最多可添加 32 个游戏。');
+      saveAppearance({games:[...preferences.games,...names]});return settingsSnapshot();
+    },
+    removeGame:name=>{
+      const names=normalizeGames([name]);
+      saveAppearance({games:preferences.games.filter(game=>!names.includes(game))});return settingsSnapshot();
+    },
+    companion:async action=>{
+      if(action==='show')await showPet();
+      else if(action==='hide')await hidePet();
+      else if(action==='corner')await cyclePetSafeCorner();
+      else throw new Error('未知的陪伴操作');
+      return settingsSnapshot();
+    },
     audioDirectory:getRuntimeFile('custom-audio'),
     setSong:(file,name)=>saveAppearance({idleSongFile:file,idleSongName:name}),
     previewSong:()=>idleSongController.preview(),
@@ -135,7 +239,7 @@ function setupSettings() {
     openSongSource:()=>shell.openExternal('https://www.bilibili.com/video/BV1pue56AEyL/'),
     save(patch) {
       const appearance={};
-      for(const key of ['scale','bubbleScale','bubbleOffset','showBadge','showSpeech','idleLife','customLabel','idleSongEnabled','idleSongMode','idleSongVolume']) if(Object.hasOwn(patch,key)) appearance[key]=patch[key];
+      for(const key of ['scale','bubbleScale','bubbleOffset','showBadge','showSpeech','idleLife','typingCompanion','gameCompanion','customLabel','idleSongEnabled','idleSongMode','idleSongVolume']) if(Object.hasOwn(patch,key)) appearance[key]=patch[key];
       if(Object.keys(appearance).length) saveAppearance(appearance);
       if(!providerLocked && VALID_PROVIDERS.has(patch.provider)) setStateProvider(patch.provider);
       if(!providerLocked && typeof patch.autoFollowCodex==='boolean') {
@@ -342,6 +446,16 @@ function codexConversations() {
   return activeProvider==='chatgpt' && autoFollow && codexFollower ? codexFollower.reducer.conversations() : [];
 }
 
+function peekConversations() {
+  const conversations=codexConversations();
+  if(conversations.length)return conversations;
+  const state=effectiveState(currentState).state;
+  if(['idle','ready'].includes(state))return [];
+  // Other AI bridges have no task list. Show only a provider/status summary,
+  // never the bridge's arbitrary message or an inactive historical bubble.
+  return [{title:activeProvider==='custom'?preferences.customLabel:PROVIDERS[activeProvider].label,state,primary:true,uncertain:false}];
+}
+
 function codexConversationOverflow() {
   return activeProvider==='chatgpt' && autoFollow && codexFollower ? codexFollower.reducer.overflow() : {count:0,uncertain:0};
 }
@@ -367,6 +481,8 @@ function sendCurrentState(extra = {}) {
       ...extra
     });
   }
+  recoveryController?.refresh();
+  updatePetTray();
 }
 
 function readStateFile(force = false, providerChanged = false) {
@@ -410,7 +526,8 @@ function startStateBridge() {
           type: "whalepet-status-reply", nonce: value.nonce || "",
           provider: activeProvider, state: currentState.state,
           renderedState, autoFollowCodex: autoFollow, follower: followStatus,
-          music:{enabled:preferences.idleSongEnabled,mode:preferences.idleSongMode,muteShortcut:musicMuteShortcut,...idleSongController?.snapshot()}
+          music:{enabled:preferences.idleSongEnabled,mode:preferences.idleSongMode,muteShortcut:musicMuteShortcut,...idleSongController?.snapshot()},
+          companion:companionSnapshot()
         })), remote.port, remote.address);
         return;
       }
@@ -462,13 +579,39 @@ function configureCodexFollower() {
   codexFollower.start();
 }
 
-async function reloadCodexStatus() {
+function reloadCodexStatus() {
+  if(reloadStatusPromise)return reloadStatusPromise;
   const follower=codexFollower;
-  if(providerLocked||activeProvider!=='chatgpt'||!autoFollow||!follower)throw new Error('请先选择 ChatGPT / Codex 并开启自动跟随。');
-  await follower.reload();
-  if(follower!==codexFollower||activeProvider!=='chatgpt')throw new Error('状态来源已改变，请在当前来源下重试。');
-  sendCurrentState({statusReloaded:true});
-  return settingsSnapshot();
+  if(providerLocked||activeProvider!=='chatgpt'||!autoFollow||!follower)return Promise.reject(new Error('请先选择 ChatGPT / Codex 并开启自动跟随。'));
+  const id=++reloadSequence;
+  const feedback=(phase,extra={})=>{
+    if(petWindow&&!petWindow.isDestroyed())petWindow.webContents.send('pet:reload-action',{id,phase,state:currentState.state,...extra});
+  };
+  reloadStatusPromise=(async()=>{
+    if(!petWindow||petWindow.isDestroyed())throw new Error('小鲸窗口不可用，请重新打开小鲸。');
+    // An explicit reload from the control room brings her back first; hidden
+    // curls never receive an on-screen progress/result badge.
+    if(petHidden)await showPet();
+    idleSongController?.activity();
+    feedback('reading');
+    await follower.reload();
+    if(follower!==codexFollower||activeProvider!=='chatgpt')throw new Error('状态来源已改变，请在当前来源下重试。');
+    if(!petWindow||petWindow.isDestroyed())throw new Error('小鲸窗口不可用，请重新打开小鲸。');
+    if(petHidden)await showPet();
+    idleSongController?.activity();
+    const receipt=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{
+        if(reloadReceipt?.id===id)reloadReceipt=null;
+        reject(new Error('日志已重新读取，但姿势尚未确认同步；请再试一次或重新打开小鲸。'));
+      },2500);
+      reloadReceipt={id,resolve,reject,timer};
+    });
+    sendCurrentState({statusReloaded:true,reloadId:id});
+    const result=await receipt;
+    feedback(result.deferred?'deferred':'synced',{state:result.state});
+    return settingsSnapshot();
+  })().catch(error=>{feedback('failed');throw error;}).finally(()=>{reloadStatusPromise=null;});
+  return reloadStatusPromise;
 }
 
 function setStateProvider(provider) {
@@ -505,56 +648,298 @@ function disableIdleSong() {
   saveAppearance({idleSongEnabled:false});
 }
 
-function showPetMenu() {
-  const providerMenu = providerLocked
-    ? [{ label: `状态来源：${PROVIDERS[activeProvider].label}（固定）`, enabled: false }]
-    : [{
-        label: `状态来源：${PROVIDERS[activeProvider].label}（Ctrl+Alt+P 切换）`,
-        submenu: [
-          {
-            label: PROVIDERS.chatgpt.menuLabel,
-            type: "radio",
-            checked: activeProvider === "chatgpt",
-            click: () => setStateProvider("chatgpt")
-          },
-          {
-            label: PROVIDERS.deepseek.menuLabel,
-            type: "radio",
-            checked: activeProvider === "deepseek",
-            click: () => setStateProvider("deepseek")
-          },
-          {
-            label: `${preferences.customLabel} · 自定义 AI`, type:'radio',
-            checked:activeProvider==='custom',click:()=>setStateProvider('custom')
-          }
-        ]
-      }];
-  const menu = Menu.buildFromTemplate([
-    {label:'小鲸的控制室…',click:()=>settingsController.open()},
-    {label:'更换姿势图片…',click:()=>settingsController.open('poses')},
-    {label:'摸鱼小曲…',click:()=>settingsController.open('music')},
-    {label:'允许待机偷偷唱歌',type:'checkbox',checked:preferences.idleSongEnabled,click:item=>{if(item.checked)saveAppearance({idleSongEnabled:true});else disableIdleSong();}},
-    {label:'关闭自动唱歌'+(musicMuteShortcut?'（Ctrl+Alt+M）':''),click:disableIdleSong},
-    {label:'嘘，先别唱啦',enabled:Boolean(idleSongController?.snapshot().playing),click:()=>idleSongController?.stop()},
-    {label:`大小 · ${Math.round(preferences.scale*100)}%`,submenu:[.75,1,1.25,1.5].map(scale=>({label:`${Math.round(scale*100)}%${scale===1?'（默认）':''}`,type:'radio',checked:preferences.scale===scale,click:()=>saveAppearance({scale})}))},
-    {label:'动作预览',submenu:POSES.map(([state,label])=>({label,click:()=>setPreviewState(state)}))},
-    { type: "separator" },
-    ...providerMenu,
-    ...(!providerLocked?[{label:'AI 接入设置…',click:()=>settingsController.open('connections')}]:[]),
-    ...(!providerLocked?[{label:'重新读取 Codex 状态',enabled:activeProvider==='chatgpt'&&autoFollow&&Boolean(codexFollower),click:async()=>{
+function toggleIdleSong() {
+  if(preferences.idleSongEnabled){disableIdleSong();return;}
+  // The normal settings path persists the choice and restarts the idle timer;
+  // enabling this option must never start a song immediately.
+  saveAppearance({idleSongEnabled:true});
+}
+
+function buildPetMenu() {
+  // A small, flat quick menu. Detailed controls live in the control room;
+  // never make the user chase hover targets or expose developer/debug lists.
+  const canReload=!petHidden&&!providerLocked&&activeProvider==='chatgpt'&&autoFollow&&Boolean(codexFollower);
+  return Menu.buildFromTemplate([
+    {id:'settings',label:'小鲸的控制室…',click:()=>settingsController.open('appearance')},
+    {id:'size',label:`调整大小 · ${Math.round(preferences.scale*100)}%…`,click:()=>settingsController.open('appearance')},
+    {id:'visibility',label:petHidden?'显示小鲸':'暂时隐藏小鲸',click:togglePetVisibility},
+    {id:'recover',label:'找回小鲸',click:cyclePetSafeCorner},
+    {id:'quiet',label:preferences.idleSongEnabled?'关闭自动唱歌':'开启自动唱歌',click:toggleIdleSong},
+    ...(canReload?[{id:'reload-codex',label:'重新读取 Codex 状态',click:async()=>{
       try{await reloadCodexStatus();}catch(error){dialog.showMessageBox(petWindow,{type:'warning',title:'状态重载未完成',message:error.message});}
     }}]:[]),
-    ...(!providerLocked ? [{
-      label: "自动跟随本机 Codex 任务", type: "checkbox", checked: autoFollow,
-      click: () => { autoFollow = !autoFollow; saveProviderSetting(); configureCodexFollower(); }
-    }] : []),
     { type: "separator" },
-    { label: "切换安全角落（Ctrl+Alt+W）", click: cyclePetSafeCorner },
-    { label: "隐藏 / 显示（Ctrl+Alt+H）", click: togglePetVisibility },
-    { label: "打开状态文件", click: () => shell.showItemInFolder(stateFile) },
-    { label: "退出 WhalePet", click: () => app.quit() }
+    {id:'quit',label:'退出小鲸',click:()=>app.quit()}
   ]);
-  menu.popup({ window: petWindow });
+}
+
+function showPetMenu(owner=petWindow) {
+  buildPetMenu().popup({ window: owner });
+}
+
+function updatePetTray() {
+  if(!petTray)return;
+  const value=JSON.stringify([currentState.state,activeProvider,preferences,companionSnapshot(),codexConversations(),codexConversationOverflow(),idleSongController?.snapshot().playing]);
+  if(value===lastTrayValue)return;
+  lastTrayValue=value;
+  const state=renderedBuddyMode==='typing'?'陪你敲键盘':renderedBuddyMode==='gaming'?'陪你玩游戏':POSES.find(p=>p[0]===currentState.state)?.[1]||'陪着你';
+  petTray.setToolTip(`小鲸鱼桌宠 · ${petHidden?(hideStage==='peeking'?'探头看你':'躲猫猫'):state}`);
+  petTray.setContextMenu(buildPetMenu());
+}
+
+function createPetTray() {
+  // Isolated hidden QA must never add a real icon beside the user's pet.
+  if(process.env.WHALEPET_QA_HIDDEN==='1')return;
+  try {
+    petTray=new Tray(path.join(__dirname,'assets','whalepet-v015','WhalePet.ico'));
+    petTray.on('double-click',showPet);
+    updatePetTray();
+    trayRefreshTimer=setInterval(updatePetTray,1000);
+  }catch(error){petTray?.destroy();petTray=null;console.warn('WhalePet tray unavailable: '+error.message);}
+}
+
+function cancelPetInteraction() {
+  stopDragTracking();
+  petWindow?.webContents.send('pet:interaction-reset');
+}
+
+function probePetCursor() {
+  if(!petWindow||petWindow.isDestroyed()||petHidden||!petWindow.isVisible()||dragCursor)return;
+  // A recovery path for Windows losing forwarded mousemove while the alpha
+  // window ignores empty margins. Never record positions or inspect other apps.
+  // Poll unchanged points too: the pose can change beneath a stationary cursor.
+  const cursor=screen.getCursorScreenPoint(),bounds=petWindow.getContentBounds();
+  const inside=cursor.x>=bounds.x&&cursor.y>=bounds.y&&cursor.x<bounds.x+bounds.width&&cursor.y<bounds.y+bounds.height;
+  if(inside){
+    const zoom=petWindow.webContents.getZoomFactor();
+    petWindow.webContents.send('pet:cursor-probe',{x:(cursor.x-bounds.x)/zoom,y:(cursor.y-bounds.y)/zoom});
+  }else if(cursorProbeInside){petWindow.webContents.send('pet:cursor-probe',null);}
+  cursorProbeInside=inside;
+}
+
+function cancelEdgeMotion(){
+  abandonPeekPull();
+  edgeGeneration++;
+  edgeTravelController?.cancel();
+  if(mouseModeStabilizeTimer)clearTimeout(mouseModeStabilizeTimer);
+  mouseModeStabilizeTimer=null;
+  return edgeGeneration;
+}
+
+function abandonPeekPull(){
+  const session=peekPull;if(!session)return;
+  peekPull=null;clearInterval(peekPullTimer);peekPullTimer=null;clearTimeout(session.startTimer);
+  session.cancelled=true;
+  recoveryController?.setPulling(false,session.requestId);recoveryController?.notifyPull('cancelled',session.requestId);
+  if(hideStage==='pulling'){hideStage='peeking';recoveryController?.peek();}
+}
+
+function updatePeekPull(){
+  const session=peekPull;if(!session||session.ending)return;
+  const cursor=session.releaseCursor||screen.getCursorScreenPoint();
+  // Only release is clamped. The moving support remains at the real cursor,
+  // including during a rapid flick; clamping it would flatten the inertia.
+  session.point={
+    x:cursor.x-session.grab.x*session.scale,
+    y:cursor.y-session.grab.y*session.scale
+  };
+  if(session.started)edgeTravelController?.updatePull(session.point);
+}
+
+async function beginPeekPull(details){
+  if(peekPull)return details?.requestId===peekPull.requestId;
+  if(!petWindow||petWindow.isDestroyed()||!petHidden||hideStage!=='peeking')return false;
+  const origin=recoveryController?.pullOrigin();
+  if(!origin||!Number.isInteger(details?.requestId)||details.requestId<1||!Number.isFinite(details?.grabX)||!Number.isFinite(details?.grabY)||
+     !Number.isFinite(details?.pressScreenX)||!Number.isFinite(details?.pressScreenY)||
+     details.grabX<0||details.grabX>=275||details.grabY<0||details.grabY>161.34765625)return false;
+  const z=origin.scale,pressedFrom={x:details.pressScreenX-details.grabX*z,y:details.pressScreenY-details.grabY*z};
+  // The grab must originate on this peeking artwork, not another application.
+  // Allow the existing 380ms head-rise transition, plus native DPI rounding.
+  if(Math.abs(pressedFrom.x-origin.x)>4||pressedFrom.y<origin.y-4||pressedFrom.y>origin.bottom-66.6015625*z+4)return false;
+  // The renderer authenticates the visible head or original loop/hole; this
+  // guard bounds the same clipped artwork and verifies its native origin.
+  // Once lifted, the straight hair tip remains the support for the upright pet,
+  // including when a face drag was used as the more forgiving gesture.
+  const grab={...AHOGE_PULL.pivot},from={x:details.pressScreenX-grab.x*z,y:details.pressScreenY-grab.y*z};
+  const area=recoveryController.geometry().area;
+  const token=cancelEdgeMotion();cancelPetInteraction();idleSongController?.activity();
+  const session={token,requestId:details.requestId,scale:z,area:{...area},from,point:{...from},grab,started:false,ending:false,released:false,cancelled:false,reducedMotion:false};
+  peekPull=session;
+  session.startTimer=setTimeout(()=>{if(peekPull===session)cancelEdgeMotion();},8000);
+  updatePeekPull();
+  try{
+    const visual=await petWindow.webContents.executeJavaScript('whalePetController.prepareEdge()');
+    if(peekPull!==session||token!==edgeGeneration)return false;
+    session.reducedMotion=visual.reducedMotion===true;
+    updatePeekPull();
+    const ok=await edgeTravelController.beginPull({scale:z,area:session.area,from:session.point,pivot:session.grab,bottom:area.y+area.height,reducedMotion:session.reducedMotion},()=>{
+      if(peekPull!==session||token!==edgeGeneration)throw new Error('Pull cancelled');
+      session.started=true;hideStage='pulling';
+      recoveryController.setPulling(true,session.requestId);recoveryController.notifyPull('started',session.requestId);
+      petWindow.webContents.send('pet:edge-action',{phase:'tucked'});
+      updatePeekPull();updatePetTray();
+    });
+    if(peekPull!==session||token!==edgeGeneration)return false;
+    if(!ok)throw new Error('Pull artwork unavailable');
+    clearTimeout(session.startTimer);
+    if(session.released)endPeekPull({cancelled:session.cancelled,requestId:session.requestId});
+    else peekPullTimer=setInterval(updatePeekPull,DRAG_TRACK_INTERVAL_MS);
+    return true;
+  }catch(error){
+    if(peekPull===session)cancelEdgeMotion();
+    console.warn('WhalePet ahoge pull recovered: '+error.message);return false;
+  }
+}
+
+async function endPeekPull(details={}){
+  const session=peekPull;if(!session||session.ending)return;
+  if(details.requestId!==session.requestId)return;
+  if(details?.cancelled===true){cancelEdgeMotion();if(details.recoveryGone)showPet();return;}
+  if(!session.released)session.releaseCursor=screen.getCursorScreenPoint();
+  session.released=true;
+  if(!session.started)return; // Release during readiness is handled once ready.
+  updatePeekPull();session.ending=true;clearInterval(peekPullTimer);peekPullTimer=null;
+  const z=session.scale,outer=petWindow.getBounds(),content=petWindow.getContentBounds();
+  const releaseArea=screen.getDisplayNearestPoint(session.releaseCursor).workArea;
+  const target=clampWindowToWorkArea({x:session.point.x-142.5*z-(content.x-outer.x),y:session.point.y-225*z-(content.y-outer.y)},dragWorkArea(releaseArea),expectedOuterSize);
+  const to=edgeActorPoint(target);
+  try{
+    const ok=await edgeTravelController.finishPull({to,duration:160,reducedMotion:session.reducedMotion});
+    if(peekPull!==session||session.token!==edgeGeneration)return;
+    if(!ok)throw new Error('Pull settlement unavailable');
+    peekPull=null;clearTimeout(session.startTimer);
+    recoveryController.notifyPull('ended',session.requestId);
+    petWindow.setBounds({...target,...expectedOuterSize},false);
+    finishShowingPet();
+  }catch(error){if(peekPull===session)cancelEdgeMotion();console.warn('WhalePet ahoge release recovered: '+error.message);}
+}
+
+function edgeActorPoint(bounds=petWindow.getBounds()){
+  const outer=petWindow.getBounds(),content=petWindow.getContentBounds(),z=preferences.scale;
+  return {x:bounds.x+(content.x-outer.x)+142.5*z,y:bounds.y+(content.y-outer.y)+225*z,opacity:1};
+}
+
+function edgeBorderPoint(layout){
+  const z=preferences.scale;
+  return {x:layout.centerX-137.5*z,y:layout.area.y+layout.area.height-268*z};
+}
+
+function settleEdgeAfterScreenChange(){
+  if(peekPull){cancelEdgeMotion();recoveryController?.refresh();return;}
+  if(!petWindow||petWindow.isDestroyed()||!['hiding','emerging'].includes(hideStage))return;
+  const emerging=hideStage==='emerging';cancelEdgeMotion();
+  if(emerging){const home=normalHomeBounds();petWindow.setBounds({...home,...expectedOuterSize},false);finishShowingPet();}
+  else settleHiddenPet();
+}
+
+function normalHomeBounds(){
+  const bounds=petWindow.getBounds(),point=hiddenHome||{x:bounds.x+(dragRoom?.left||0),y:bounds.y+(dragRoom?.top||0)};
+  const area=dragWorkArea(screen.getDisplayNearestPoint(point).workArea);
+  return clampWindowToWorkArea({x:point.x-(dragRoom?.left||0),y:point.y-(dragRoom?.top||0)},area,expectedOuterSize||PET_WINDOW_SIZE);
+}
+
+function settleHiddenPet(){
+  if(!petWindow||petWindow.isDestroyed())return;
+  hideStage='hidden';petHidden=true;
+  petWindow.webContents.send('pet:edge-action',{phase:'tucked'});
+  petWindow.hide();recoveryController?.show();updatePetTray();
+}
+
+function finishShowingPet(){
+  if(!petWindow||petWindow.isDestroyed())return;
+  hideStage='normal';petHidden=false;hiddenHome=null;
+  recoveryController?.hide();
+  petWindow.webContents.send('pet:edge-action',{phase:'normal'});
+  configureBuddyMonitoring();idleSongController?.activity();
+  petWindow.showInactive();
+  petWindow.moveTop();saveWindowPosition();updatePetTray();
+  // Keep the final journey bitmap underneath until the normal renderer has
+  // painted. A cancelled/next journey must never be hidden by this old handoff.
+  const handoff=edgeGeneration;
+  let handoffTimer;
+  const painted=petWindow.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))').catch(()=>{});
+  Promise.race([painted,new Promise(resolve=>{handoffTimer=setTimeout(resolve,250);})])
+    .then(()=>{clearTimeout(handoffTimer);if(handoff===edgeGeneration&&hideStage==='normal')edgeTravelController?.cancel();});
+}
+
+function hidePet() {
+  if(!petWindow||petWindow.isDestroyed())return Promise.resolve();
+  if(peekPull)cancelEdgeMotion();
+  if(hideStage==='hiding')return edgeTransitionPromise;
+  if(['hidden','peeking'].includes(hideStage)){recoveryController?.retract();return Promise.resolve();}
+  const interrupted=hideStage==='emerging'?edgeTravelController?.freeze().catch(()=>null):null;
+  const token=cancelEdgeMotion();cancelPetInteraction();
+  if(!hiddenHome){saveWindowPosition();const b=petWindow.getBounds();hiddenHome={x:b.x+(dragRoom?.left||0),y:b.y+(dragRoom?.top||0)};}
+  hideStage='hiding';petHidden=true;
+  petWindow.webContents.send('pet:edge-action',{phase:'prepare'});
+  configureBuddyMonitoring();idleSongController?.activity();
+  recoveryController?.hide();recoveryController?.setAnchor({x:hiddenHome.x+150*preferences.scale,y:hiddenHome.y+170*preferences.scale});
+  updatePetTray();
+  edgeTransitionPromise=(async()=>{
+    try{
+      await recoveryController.ready();
+      const visual=await petWindow.webContents.executeJavaScript('whalePetController.prepareEdge()');
+      if(token!==edgeGeneration)return;
+      if(!visual.ready)throw new Error('角色图片未能加载');
+      const captured=await interrupted;
+      if(token!==edgeGeneration||!petWindow||petWindow.isDestroyed())return;
+      const layout=recoveryController.geometry(),from=captured||edgeActorPoint(),to=edgeBorderPoint(layout);
+      const distance=Math.hypot(to.x-from.x,to.y-from.y);
+      const runMs=visual.reducedMotion?0:Math.round(Math.max(360,Math.min(850,distance/1.2))),dipMs=visual.reducedMotion?0:260;
+      petWindow.webContents.send('pet:edge-action',{phase:'hiding',composited:true});
+      mouseInteractive=false;petWindow.setIgnoreMouseEvents(true,{forward:true});
+      // One stationary surface and one compositor clock: no per-frame native
+      // window movement, integer rounding, independent hop clock or resizing.
+      const completed=await edgeTravelController.play({mode:'hiding',scale:preferences.scale,bottom:layout.area.y+layout.area.height,
+        from,to,runMs,dipMs,reducedMotion:visual.reducedMotion},()=>petWindow.hide());
+      if(!completed){if(token===edgeGeneration)throw new Error('小跑画面未能完成，已保留小鲸');return;}
+      if(token===edgeGeneration)settleHiddenPet();
+    }catch(error){
+      if(token!==edgeGeneration||!petWindow||petWindow.isDestroyed())return;
+      const home=normalHomeBounds();petWindow.setBounds({...home,...expectedOuterSize},false);finishShowingPet();
+      dialog.showMessageBox(petWindow,{type:'warning',title:'暂时不能躲起来',message:'躲猫猫画面未能准备好，已保留小鲸：'+error.message});
+    }
+  })();
+  return edgeTransitionPromise;
+}
+
+function showPet() {
+  if(!petWindow||petWindow.isDestroyed())return Promise.resolve();
+  if(peekPull)cancelEdgeMotion();
+  if(hideStage==='emerging')return edgeTransitionPromise;
+  const fromBorder=['hidden','peeking'].includes(hideStage),wasHidden=petHidden;
+  const interrupted=hideStage==='hiding'?edgeTravelController?.freeze().catch(()=>null):null;
+  const token=cancelEdgeMotion();cancelPetInteraction();repairPetWindowBounds('show');
+  const target=normalHomeBounds();
+  if(!wasHidden){petWindow.setBounds({...target,...expectedOuterSize},false);finishShowingPet();return Promise.resolve();}
+  if(fromBorder){
+    // Resizing or removing a monitor while tucked can relocate the invisible
+    // main window. Start the jump at the current visible curl, not at home.
+    const layout=recoveryController.geometry(),outer=petWindow.getBounds(),content=petWindow.getContentBounds(),z=preferences.scale;
+    petWindow.setBounds({x:Math.round(layout.centerX-280*z-(content.x-outer.x)),y:Math.round(layout.area.y+layout.area.height-493*z-(content.y-outer.y)),...expectedOuterSize},false);
+  }
+  hideStage='emerging';petHidden=true;recoveryController?.hide();updatePetTray();
+  edgeTransitionPromise=(async()=>{
+    try{
+      const visual=await petWindow.webContents.executeJavaScript('whalePetController.prepareEdge()').catch(()=>({reducedMotion:true,ready:false}));
+      const captured=await interrupted;
+      if(token!==edgeGeneration||!petWindow||petWindow.isDestroyed())return;
+      const layout=recoveryController.geometry(),from=captured||edgeActorPoint();
+      if(fromBorder&&!captured){from.y+=205*preferences.scale;from.opacity=0;}
+      const duration=visual.reducedMotion?0:520;
+      petWindow.webContents.send('pet:edge-action',{phase:'emerging',composited:true});
+      const completed=await edgeTravelController.play({mode:'emerging',scale:preferences.scale,bottom:layout.area.y+layout.area.height,
+        from,to:edgeActorPoint(target),duration,reducedMotion:visual.reducedMotion},()=>petWindow.hide());
+      if(!completed){if(token===edgeGeneration)throw new Error('跳回画面未能完成');return;}
+      if(token===edgeGeneration){petWindow.setBounds({...target,...expectedOuterSize},false);finishShowingPet();}
+    }catch(error){
+      if(token!==edgeGeneration||!petWindow||petWindow.isDestroyed())return;
+      petWindow.setBounds({...target,...expectedOuterSize},false);finishShowingPet();
+      console.warn('WhalePet jump animation recovered: '+error.message);
+    }
+  })();
+  return edgeTransitionPromise;
 }
 
 function movePetToSafeCorner() {
@@ -566,13 +951,11 @@ function movePetToSafeCorner() {
   const y = area.y + area.height - size.height - 20;
   stopDragTracking();
   petWindow.setPosition(Math.round(x), Math.round(y));
-  petWindow.showInactive();
-  petWindow.moveTop();
-  petHidden = false;
-  saveWindowPosition();
+  showPet();
 }
 
 function cyclePetSafeCorner() {
+  if(petHidden)return showPet();
   if (!petWindow || petWindow.isDestroyed()) return;
   const area = dragWorkArea(screen.getPrimaryDisplay().workArea);
   repairPetWindowBounds("corner-cycle");
@@ -590,21 +973,12 @@ function cyclePetSafeCorner() {
   const next = positions[(currentIndex + 1) % positions.length];
   stopDragTracking();
   petWindow.setPosition(Math.round(next.x), Math.round(next.y));
-  petWindow.showInactive();
-  petWindow.moveTop();
-  petHidden = false;
-  saveWindowPosition();
+  showPet();
 }
 
 function togglePetVisibility() {
   if (!petWindow || petWindow.isDestroyed()) return;
-  if (petWindow.isVisible()) {
-    petWindow.hide();
-    stopDragTracking();
-    petHidden = true;
-  } else {
-    movePetToSafeCorner();
-  }
+  if(petHidden||!petWindow.isVisible())showPet();else hidePet();
 }
 
 function clampWindowPosition(x, y, width, height) {
@@ -636,7 +1010,7 @@ function readWindowPosition(width, height) {
 function saveWindowPosition() {
   if (!petWindow || petWindow.isDestroyed() || !windowStateFile) return;
   const [left, top] = petWindow.getPosition();
-  const x=Math.round(left+(dragRoom?.left||0)),y=Math.round(top+(dragRoom?.top||0));
+  const x=Math.round(hiddenHome?.x??left+(dragRoom?.left||0)),y=Math.round(hiddenHome?.y??top+(dragRoom?.top||0));
   fs.mkdirSync(path.dirname(windowStateFile), { recursive: true });
   const temporaryFile = `${windowStateFile}.${process.pid}.tmp`;
   fs.writeFileSync(temporaryFile, `${JSON.stringify({ x, y }, null, 2)}\n`, "utf8");
@@ -700,7 +1074,7 @@ function createPetWindow() {
     expectedContentSize = { width: stableContentBounds.width, height: stableContentBounds.height };
     applyPetSize();
     repairPetWindowBounds("renderer-ready");
-    if(process.env.WHALEPET_QA_HIDDEN!=="1") petWindow.showInactive();
+    if(!petHidden&&process.env.WHALEPET_QA_HIDDEN!=="1") petWindow.showInactive();
     console.log(`WhalePet window visible at ${JSON.stringify(petWindow.getBounds())}`);
     if (process.env.WHALEPET_QA_DRAG_VISUAL === "1") {
       setTimeout(async () => {
@@ -907,7 +1281,7 @@ function createPetWindow() {
   petWindow.webContents.on("render-process-gone", (_event, details) => {
     console.error(`WhalePet renderer stopped: ${details.reason}`);
   });
-  petWindow.on("closed", () => { petWindow = null; });
+  petWindow.on("closed", () => { petWindow = null;recoveryController?.dispose();recoveryController=null;edgeTravelController?.dispose();edgeTravelController=null; });
 }
 
 // Normal releases remain single-instance. Automated visual QA may open an
@@ -917,8 +1291,9 @@ const hasLock = qaAllowsSecondInstance || app.requestSingleInstanceLock();
 if (!hasLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (petWindow) petWindow.showInactive();
+  app.on("second-instance", (_event,argv) => {
+    showPet();
+    if(argv?.includes('--settings'))settingsController?.open('companion');
   });
 
   app.whenReady().then(() => {
@@ -930,23 +1305,33 @@ if (!hasLock) {
     preferences=readPreferences(getRuntimeFile('preferences.json'));
     windowStateFile = getWindowStateFile();
     createPetWindow();
-    idleSongController=createIdleSongController({getWindow:()=>petWindow,getPreferences:()=>preferences,getDirectory:()=>getRuntimeFile('custom-audio'),isBlocked:()=>petHidden||Boolean(dragCursor)||!petWindow||petWindow.isDestroyed(),isAiIdle:()=>activeProvider==='chatgpt'&&['idle','ready'].includes(currentState.state)&&renderedState==='idle'&&!(autoFollow&&codexFollower?.reducer.hasUnresolved())});
+    idleSongController=createIdleSongController({getWindow:()=>petWindow,getPreferences:()=>preferences,getDirectory:()=>getRuntimeFile('custom-audio'),isBlocked:()=>petHidden||Boolean(dragCursor)||buddyRequest().mode!=='none'||!petWindow||petWindow.isDestroyed(),isAiIdle:()=>activeProvider==='chatgpt'&&['idle','ready'].includes(currentState.state)&&renderedState==='idle'&&!(autoFollow&&codexFollower?.reducer.hasUnresolved())});
     petWindow.webContents.on('did-start-loading',()=>idleSongController.activity());
     petWindow.webContents.on('render-process-gone',()=>idleSongController.activity());
     watchStateFile();
     startStateBridge();
     configureCodexFollower();
     setupSettings();
+    recoveryController=createRecoveryController({getPet:()=>petWindow,isHidden:()=>petHidden,restore:showPet,menu:showPetMenu,
+      beginPull:beginPeekPull,movePull:value=>{if(value?.requestId===peekPull?.requestId)updatePeekPull();},endPull:endPeekPull,
+      onUnavailable:()=>{if(peekPull){cancelEdgeMotion();showPet();}},
+      getView:()=>({scale:preferences.scale,showSpeech:preferences.showSpeech,conversations:peekConversations(),conversationOverflow:codexConversationOverflow()}),
+      onChange:()=>{if(['hidden','peeking'].includes(hideStage))hideStage=recoveryController?.snapshot().recoveryStage||'hidden';updatePetTray();}});
+    edgeTravelController=createEdgeTravelController({onGeometryChanged:settleEdgeAfterScreenChange,onPullInterrupted:()=>{if(peekPull)cancelEdgeMotion();}});
+    // Warm the intact picture invisibly so the first escape need not decode it.
+    edgeTravelController.ready().catch(error=>console.warn('WhalePet travel preparation: '+error.message));
+    setupBuddy();
     if(process.env.WHALEPET_QA_SETTINGS==='1'||process.argv.includes('--settings'))settingsController.open();
-    globalShortcut.register("CommandOrControl+Alt+W", cyclePetSafeCorner);
-    globalShortcut.register("CommandOrControl+Alt+H", togglePetVisibility);
+    companionShortcuts.corner=globalShortcut.register("CommandOrControl+Alt+W", cyclePetSafeCorner);
+    companionShortcuts.visibility=globalShortcut.register("CommandOrControl+Alt+H", togglePetVisibility);
     musicMuteShortcut=globalShortcut.register('CommandOrControl+Alt+M',disableIdleSong);
     if (!providerLocked) {
-      globalShortcut.register("CommandOrControl+Alt+P", cycleStateProvider);
+      providerShortcut=globalShortcut.register("CommandOrControl+Alt+P", cycleStateProvider);
     }
+    createPetTray();
 
     ipcMain.on("pet:drag-start", (_event, details) => {
-      if (!petWindow || petWindow.isDestroyed()) return;
+      if (!petWindow || petWindow.isDestroyed() || petHidden) return;
       stopDragTracking();
       repairPetWindowBounds("drag-start");
       petWindow.setAlwaysOnTop(true, "screen-saver");
@@ -993,6 +1378,7 @@ if (!hasLock) {
     });
     ipcMain.on("pet:set-interactive", (_event, interactive) => {
       if (!petWindow || petWindow.isDestroyed()) return;
+      if(petHidden){mouseInteractive=false;petWindow.setIgnoreMouseEvents(true,{forward:true});return;}
       if (process.env.WHALEPET_QA_FORCE_INTERACTIVE === "1") {
         mouseInteractive = true;
         petWindow.setIgnoreMouseEvents(false);
@@ -1023,21 +1409,57 @@ if (!hasLock) {
       if(event.sender!==petWindow.webContents)throw new Error('Invalid sender');
       return rendererPreferences();
     });
-    ipcMain.on("pet:context-menu", showPetMenu);
+    const isPetSender=event=>event.sender===petWindow?.webContents&&event.senderFrame===petWindow?.webContents.mainFrame;
+    ipcMain.on('pet:status-reloaded',(event,value)=>{
+      if(!isPetSender(event)||!reloadReceipt||value?.id!==reloadReceipt.id||!VALID_STATES.has(value?.state)||typeof value?.ok!=='boolean')return;
+      const receipt=reloadReceipt;reloadReceipt=null;clearTimeout(receipt.timer);
+      if(!value.ok){receipt.reject(new Error('日志已重读，但角色图片未能同步加载，请再试一次。'));return;}
+      renderedState=value.state;
+      reloadDisplay={state:value.state,deferred:value.deferred===true,appliedAt:Date.now()};
+      receipt.resolve({...reloadDisplay});
+    });
+    ipcMain.handle('pet:request-buddy',event=>{
+      if(!isPetSender(event))throw new Error('Invalid sender');
+      return buddyRequest();
+    });
+    ipcMain.on('pet:buddy-rendered',(event,mode)=>{
+      if(!isPetSender(event)||!['none','typing','gaming'].includes(mode))return;
+      if(renderedBuddyMode===mode)return;
+      renderedBuddyMode=mode;updatePetTray();
+    });
+    ipcMain.on("pet:context-menu", event=>{
+      if(!petHidden&&event.sender===petWindow?.webContents)showPetMenu();
+    });
     boundsGuardTimer = setInterval(
       () => repairPetWindowBounds("periodic-guard"),
       BOUNDS_GUARD_INTERVAL_MS
     );
+    // Longer than the renderer's 90ms release delay, so blank margins can
+    // actually release between probes instead of continuously resetting it.
+    cursorProbeTimer=setInterval(probePetCursor,120);
   });
 }
 
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => {
+  cancelEdgeMotion();
+  if(reloadReceipt){clearTimeout(reloadReceipt.timer);reloadReceipt.reject(new Error('小鲸正在退出'));reloadReceipt=null;}
+  recoveryController?.dispose();recoveryController=null;
+  edgeTravelController?.dispose();edgeTravelController=null;
+  if(buddyTimer)clearInterval(buddyTimer);
+  buddyTimer=null;
+  userActivity?.dispose();userActivity=null;
+  for(const [event,handler] of Object.entries(buddyPowerHandlers))powerMonitor.removeListener(event,handler);
+  if(trayRefreshTimer)clearInterval(trayRefreshTimer);
+  trayRefreshTimer=null;
+  petTray?.destroy();petTray=null;
   idleSongController?.dispose();
   codexFollower?.stop();
   stopDragTracking();
   if (boundsGuardTimer) clearInterval(boundsGuardTimer);
   boundsGuardTimer = null;
+  if(cursorProbeTimer)clearInterval(cursorProbeTimer);
+  cursorProbeTimer=null;cursorProbeInside=false;
   if (mouseModeStabilizeTimer) clearTimeout(mouseModeStabilizeTimer);
   mouseModeStabilizeTimer = null;
   if (stateFile) fs.unwatchFile(stateFile, stateWatchListener);

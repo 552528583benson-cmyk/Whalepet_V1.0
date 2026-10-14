@@ -1,16 +1,24 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-const {app,BrowserWindow,dialog,powerMonitor,globalShortcut,Menu}=require('electron');
+const {app,BrowserWindow,dialog,powerMonitor,globalShortcut,Menu,screen}=require('electron');
 const root=path.resolve(__dirname,'..'),run=fs.mkdtempSync(path.join(root,'work/idle-song-test-'));
 process.env.WHALEPET_RUNTIME_DIR=path.join(run,'runtime');
 process.env.WHALEPET_QA_ALLOW_SECOND_INSTANCE='1';process.env.WHALEPET_QA_HIDDEN='1';process.env.WHALEPET_QA_SETTINGS='1';process.env.WHALEPET_DISABLE_AUTO_FOLLOW='1';
 process.env.WHALEPET_BRIDGE_PORT=String(44000+process.pid%1000);
 app.setPath('userData',path.join(run,'electron'));app.setAppPath(root);
+// Run the compositor without showing UI, registering global keys, recording
+// user activity, or allowing transparent QA windows to capture desktop input.
+app.whenReady().then(()=>{screen.getCursorScreenPoint=()=>({x:-1000000,y:-1000000});});
+app.on('browser-window-created',(_event,window)=>{
+  window.setOpacity(0);window.setSkipTaskbar(true);window.setFocusable(false);window.webContents.setAudioMuted(true);
+  const nativeIgnore=window.setIgnoreMouseEvents.bind(window);
+  window.setIgnoreMouseEvents=()=>nativeIgnore(true,{forward:true});window.setIgnoreMouseEvents(true,{forward:true});
+});
+require('../user-activity').createUserActivity=()=>({start:()=>false,stop(){},dispose(){},getStatus:()=>({state:'stopped',reason:null,available:false})});
 let clock=0,idle=0;
 const mod=require('../idle-song'),original=mod.createIdleSongController;
 let controller;
 let emergencyMute;
-const register=globalShortcut.register.bind(globalShortcut);
-globalShortcut.register=(key,fn)=>{if(key==='CommandOrControl+Alt+M'){emergencyMute=fn;return false;}return register(key,fn);};
+globalShortcut.register=(key,fn)=>{if(key==='CommandOrControl+Alt+M')emergencyMute=fn;return false;};
 mod.createIdleSongController=options=>(controller=original({...options,clock:()=>clock}));
 powerMonitor.getSystemIdleTime=()=>idle;powerMonitor.getSystemIdleState=()=> 'active';
 require('../main');
@@ -21,7 +29,7 @@ const wav=Buffer.alloc(44+8000*2*30);wav.write('RIFF');wav.writeUInt32LE(wav.len
 const source=path.join(run,'silent-fixture.wav');fs.writeFileSync(source,wav);
 app.whenReady().then(async()=>{
   const settings=await eventually(()=>{const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('settings.html'));assert.ok(w);return w;});
-  const pet=BrowserWindow.getAllWindows().find(w=>w!==settings);pet.webContents.setAudioMuted(true);
+  const pet=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('index.html'));pet.webContents.setAudioMuted(true);
   // Hidden Chromium windows suspend RAF. Keep the isolated test window fully
   // transparent and unfocused while allowing its compositor to run normally.
   pet.setOpacity(0);pet.showInactive();
@@ -140,11 +148,42 @@ app.whenReady().then(async()=>{
   clock+=600000;await pause(650);assert.equal(controller.snapshot().playing,false);
   await good('petSettings.save({idleSongEnabled:true})');await good('petSettings.previewSong()');emergencyMute();
   assert.equal(controller.snapshot().playing,false);assert.equal((await good('petSettings.get()')).preferences.idleSongEnabled,false,'emergency shortcut disables rather than toggles');
-  const oldBuild=Menu.buildFromTemplate;let menu;
-  Menu.buildFromTemplate=template=>(menu=template,{popup(){}});
-  await petJs('window.whalePet.openContextMenu()');await eventually(()=>assert.ok(menu));Menu.buildFromTemplate=oldBuild;
-  assert.equal(menu.find(item=>item.label==='允许待机偷偷唱歌').checked,false);
-  assert.ok(menu.find(item=>item.label.startsWith('关闭自动唱歌')));
+  const readMenu=async()=>{
+    const oldBuild=Menu.buildFromTemplate;let value;
+    Menu.buildFromTemplate=template=>(value=template,{popup(){}});
+    try{await petJs('window.whalePet.openContextMenu()');await eventually(()=>assert.ok(value));return value;}
+    finally{Menu.buildFromTemplate=oldBuild;}
+  };
+  let menu=await readMenu();
+  assert.ok(menu.every(item=>!Object.hasOwn(item,'submenu')),'music controls do not reintroduce nested right-click menus');
+  const quiet=menu.find(item=>item.id==='quiet');assert.ok(quiet);
+  const quietIndex=menu.findIndex(item=>item.id==='quiet');
+  assert.equal(quiet.label,'开启自动唱歌','disabled music offers enable in the original menu slot');
+  await good('petSettings.save({idleSongEnabled:true})');await good('petSettings.previewSong()');
+  const preferencesBeforeToggle=(await good('petSettings.get()')).preferences;
+  // A previously built callback must toggle the current preference, not its old label.
+  quiet.click();assert.equal(controller.snapshot().playing,false);
+  assert.equal((await good('petSettings.get()')).preferences.idleSongEnabled,false,'one-click menu quiet action stops and persistently disables automatic music');
+  menu=await readMenu();assert.equal(menu.findIndex(item=>item.id==='quiet'),quietIndex);
+  assert.equal(menu[quietIndex].label,'开启自动唱歌');
+  clock+=600000;await pause(650);assert.equal(controller.snapshot().playing,false);
+  menu[quietIndex].click();
+  let toggled=(await good('petSettings.get()')).preferences;
+  assert.equal(toggled.idleSongEnabled,true);
+  assert.deepEqual(toggled,preferencesBeforeToggle,'re-enable preserves all unrelated preferences and imported audio');
+  assert.equal(require('../preferences').readPreferences(path.join(run,'runtime/preferences.json')).idleSongEnabled,true,'on persists for next launch');
+  assert.equal(controller.snapshot().playing,false,'re-enabling does not immediately start a song after long idle');
+  await pause(650);clock+=299000;await pause(650);assert.equal(controller.snapshot().playing,false,'re-enable starts a fresh five-minute wait');
+  clock+=1000;await eventually(()=>assert.equal(controller.snapshot().playing,true));
+  menu=await readMenu();assert.equal(menu.findIndex(item=>item.id==='quiet'),quietIndex);
+  assert.equal(menu[quietIndex].label,'关闭自动唱歌');
+  menu[quietIndex].click();assert.equal(controller.snapshot().playing,false,'same menu slot stops automatic playback immediately');
+  toggled=(await good('petSettings.get()')).preferences;
+  assert.deepEqual(toggled,{...preferencesBeforeToggle,idleSongEnabled:false});
+  assert.equal(require('../preferences').readPreferences(path.join(run,'runtime/preferences.json')).idleSongEnabled,false);
+  await eventually(async()=>assert.equal(await petJs('document.body.classList.contains("music-playing")'),false));
+  await js('petSettings.get().then(r=>{snapshot=r.value;render()})');
+  assert.match(await js('document.querySelector("#musicMuteHint").textContent'),/开启自动唱歌/,'control-room guidance follows the disabled state');
   assert.equal((await good('petSettings.get()')).musicMuteShortcut,false,'shortcut conflict has an honest fallback');
   if(process.env.WHALEPET_TEST_SONG_HTML) {
     dialog.showOpenDialog=async()=>({canceled:false,filePaths:[process.env.WHALEPET_TEST_SONG_HTML]});

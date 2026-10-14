@@ -7,7 +7,7 @@ process.env.WHALEPET_BRIDGE_PORT=String(46000+process.pid%1000);
 app.setPath('userData',path.join(run,'electron'));app.setAppPath(root);require('../main');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 app.whenReady().then(async()=>{
- await pause(2000);const win=BrowserWindow.getAllWindows()[0],js=s=>win.webContents.executeJavaScript(s);
+ await pause(2000);const win=BrowserWindow.getAllWindows().find(window=>window.webContents.getURL().endsWith('index.html')),js=s=>win.webContents.executeJavaScript(s);
  assert.equal(await js('window.whalePetController.idleLife.ready'),true);
  await js("window.whalePetController.setState({state:'idle',preview:true})");
  win.showInactive();await pause(1300);

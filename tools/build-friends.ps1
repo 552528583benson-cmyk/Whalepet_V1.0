@@ -14,8 +14,14 @@ New-Item -ItemType Directory -Path (Join-Path $stage 'locales') | Out-Null
 foreach($locale in 'en-US','zh-CN','zh-TW'){
  Copy-Item -LiteralPath (Join-Path $electronRoot "locales\$locale.pak") -Destination (Join-Path $stage 'locales')
 }
-$appFiles=@('main.js','pet.js','preload.js','index.html','style.css','idle-life.js','idle-song.js','idle-song-import.js','idle-song-player.js','music-dance.js','drag-physics.js','drag-math.js','state-schema.js','codex-state-follower.js','preferences.js','settings-window.js','settings-preload.js','settings.js','settings.html','settings.css','set-whalepet-state.js','get-whalepet-status.js','PROVIDER_INTEGRATION.md')
+$appFiles=@('main.js','pet.js','preload.js','index.html','style.css','reload-action.js','idle-life.js','idle-song.js','idle-song-import.js','idle-song-player.js','music-dance.js','buddy-motion.js','buddy-renderer.js','buddy-policy.js','user-activity.js','drag-physics.js','drag-math.js','state-schema.js','codex-state-follower.js','preferences.js','settings-window.js','settings-preload.js','settings.js','settings.html','settings.css','recovery-window.js','recovery-preload.js','recovery.html','recovery.js','recovery.css','edge-travel-window.js','edge-travel-preload.js','edge-travel.html','edge-travel.js','edge-travel.css','set-whalepet-state.js','get-whalepet-status.js','PROVIDER_INTEGRATION.md')
 foreach($file in $appFiles){Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination $appDir}
+Copy-Item -LiteralPath (Join-Path $projectRoot 'ahoge-pull-assets.js') -Destination $appDir
+# This helper is shipped as code only. Activity detection remains opt-in; no
+# runtime preferences or the author's selected game process names are copied.
+$native=Join-Path $appDir 'native'
+New-Item -ItemType Directory -Path $native -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'native\user-activity.ps1') -Destination $native
 $package=Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json
 # Runtime-only manifest: no developer commands or dependencies are shipped.
 @{name=$package.name;productName=$package.productName;version=$package.version;private=$true;main='main.js';description=$package.description} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $appDir 'package.json') -Encoding utf8
@@ -28,12 +34,25 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\whalepet-hd\idle-life\bli
 $tail=Join-Path $appDir 'assets\generated-transitions\tail-hang'
 New-Item -ItemType Directory -Path $tail -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\generated-transitions\tail-hang\pose.png') -Destination $tail
+$ahoge=Join-Path $appDir 'assets\generated-transitions\ahoge-pull'
+New-Item -ItemType Directory -Path $ahoge -Force | Out-Null
+foreach($pose in 'open.png','smile.png'){
+ Copy-Item -LiteralPath (Join-Path $projectRoot "assets\generated-transitions\ahoge-pull\$pose") -Destination $ahoge
+}
 Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\whalepet-v015\WhalePet.ico') -Destination (Join-Path $stage 'WhalePet.ico')
+$trayIcon=Join-Path $appDir 'assets\whalepet-v015'
+New-Item -ItemType Directory -Path $trayIcon -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\whalepet-v015\WhalePet.ico') -Destination $trayIcon
 $music=Join-Path $appDir 'assets\whalepet-music'
 New-Item -ItemType Directory -Path $music -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\whalepet-music\dancing-v1.png') -Destination $music
+$buddy=Join-Path $appDir 'assets\whalepet-buddy'
+New-Item -ItemType Directory -Path $buddy -Force | Out-Null
+foreach($file in 'typing-v1.png','gaming-v1.png','PROMPTS.md'){
+ Copy-Item -LiteralPath (Join-Path $projectRoot "assets\whalepet-buddy\$file") -Destination $buddy
+}
 New-Item -ItemType Directory -Path (Join-Path $appDir 'docs') -Force | Out-Null
-foreach($file in 'USER_GUIDE.md','IDLE_SONG.md','RELEASE-20260930.md'){
+foreach($file in 'USER_GUIDE.md','IDLE_SONG.md','RELEASE-20260930.md','DESKTOP_BUDDY.md'){
  Copy-Item -LiteralPath (Join-Path $projectRoot "docs\$file") -Destination (Join-Path $appDir 'docs')
 }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\RUNTIME_ASSETS.md') -Destination (Join-Path $stage 'ASSET_ATTRIBUTION.md')

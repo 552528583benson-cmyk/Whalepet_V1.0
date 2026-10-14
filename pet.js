@@ -160,6 +160,9 @@ const motionLayer = document.querySelector(".motion-layer");
 const layers = [document.querySelector("#characterA"), document.querySelector("#characterB")];
 const speech = document.querySelector("#speech");
 const badge = document.querySelector("#stateBadge");
+const edgeClip=document.querySelector('#edgeClip'),edgeActor=document.querySelector('#edgeActor');
+let edgeVisualPhase='',edgeTraveling=false;
+let reloadAction=null;
 
 let activeState = "idle";
 let activeMessage = "待机中";
@@ -177,6 +180,7 @@ let deferredStateTimer = null;
 let readyTimer = null;
 let previewTimer = null;
 let previewUntil = 0;
+let aiReloadHoldUntil=0,aiReloadHoldTimer=null;
 let bubbleTimer = null;
 let reactionAnimation = null;
 let transitionMotionAnimation = null;
@@ -201,12 +205,18 @@ const dragPendulum = window.WhaleDragPhysics.create();
 const alphaCache = new Map();
 let dragExpressionTimers = [];
 const idleLife = window.createIdleLife({parent:motionLayer,pet,compact:()=>Number(userPreferences.scale||1)<=.85,eligible:()=>
-  activeState==='idle' && !dragVisualActive && !transitionInProgress &&
-  !reducedMotion.matches && !document.body.classList.contains('music-playing') && userPreferences.idleLife!==false &&
+  activeState==='idle' && !edgeVisualPhase && !dragVisualActive && !transitionInProgress && reloadAction?.info().phase!=='reading' &&
+  !reducedMotion.matches && !document.body.classList.contains('music-playing') && !pet.classList.contains('has-buddy') && userPreferences.idleLife!==false &&
   !userPreferences.images['idle.webp'] &&
   layers[visibleLayer].dataset.filename==='idle.webp' && layers[visibleLayer].complete &&
   layers[visibleLayer].src.includes('/whalepet-hd/idle.png')
 });
+
+reloadAction=window.createReloadAction({motion:document.querySelector('#reloadMotion'),feedback:document.querySelector('#reloadFeedback'),label:document.querySelector('#reloadLabel'),
+  eligible:()=>activeProvider==='chatgpt'&&!edgeVisualPhase&&!dragVisualActive&&!pointerStart&&!document.hidden,
+  showText:()=>userPreferences.showSpeech!==false,reducedMotion,
+  onChange:()=>{idleLife.sync();window.whaleBuddy?.sync();}});
+window.whalePet.onReloadAction(value=>reloadAction.receive(value));
 
 layers.forEach((layer) => {
   layer.dataset.filename = "idle.webp";
@@ -307,7 +317,7 @@ function alphaMapFor(layer) {
 
 function characterContains(x, y) {
   const musicLayer=document.querySelector('.music-cg');
-  const layer = document.body.classList.contains('music-playing') && musicLayer && !musicLayer.hidden ? musicLayer : layers[visibleLayer];
+  const layer = window.whaleBuddy?.hitLayer() || (document.body.classList.contains('music-playing') && musicLayer && !musicLayer.hidden ? musicLayer : layers[visibleLayer]);
   const map = alphaMapFor(layer);
   let rect = layer.getBoundingClientRect();
   if(layer===musicLayer && map && window.WhaleMusicDance) {
@@ -341,8 +351,33 @@ function characterContains(x, y) {
 }
 
 function interactiveAt(x, y) {
-  return characterContains(x, y);
+  return !edgeVisualPhase&&characterContains(x, y);
 }
+
+window.whalePet.onEdgeAction(value=>{
+  const phase=value?.phase;
+  if(!['prepare','hiding','tucked','emerging','normal'].includes(phase))return;
+  edgeTraveling=value.composited===true&&!reducedMotion.matches;
+  if(phase==='normal'){
+    edgeVisualPhase='';edgeTraveling=false;document.body.classList.remove('edge-active');edgeClip.hidden=true;
+    commitState({state:activeState,message:activeMessage,provider:activeProvider,immediate:true},true);
+    idleLife.sync();window.whaleBuddy?.sync();return;
+  }
+  if(!edgeVisualPhase){
+    stateVersion++;
+    clearTimeout(frameTimer);clearTimeout(queuedStateTimer);clearTimeout(previewTimer);previewUntil=0;
+    clearTimeout(deferredStateTimer);queuedIncomingState=null;
+    if(transitionRaf!==null)cancelAnimationFrame(transitionRaf);transitionRaf=null;transitionInProgress=false;
+    transitionMotionAnimation?.cancel();transitionMotionAnimation=null;
+    stateSwapAnimation?.cancel();stateSwapAnimation=null;reactionAnimation?.cancel();
+    cancelInteraction();
+  }
+  edgeVisualPhase=phase;document.body.classList.add('edge-active');
+  reloadAction.suspend();
+  // The separate, fixed travel surface owns the entire path and hop timeline.
+  // Never animate a second copy on the native window beneath it.
+  edgeClip.hidden=phase==='tucked'||value.composited===true;idleLife.sync();window.whaleBuddy?.sync();
+});
 
 function animateDragTilt(now) {
   dragTiltRaf = 0;
@@ -622,6 +657,7 @@ function scheduleDragBlink(version, delay = DRAG_BLINK_DELAY_MS) {
 }
 
 function startDragVisual() {
+  reloadAction.suspend();
   dragVisualActive = true;
   const version = stateVersion;
   clearTimeout(frameTimer);
@@ -717,6 +753,7 @@ function commitState(value, forceRestart = false) {
   pet.dataset.provider = activeProvider;
   if (!stateChanged && !forceRestart && !providerChanged) {
     window.whalePet.reportState({ state, message, provider: activeProvider, restarted: false, at: Math.round(performance.now()) });
+    window.whaleBuddy?.sync();
     return;
   }
 
@@ -745,13 +782,14 @@ function commitState(value, forceRestart = false) {
   const transition = STATE_TRANSITIONS[`${previousState}>${state}`];
   if (dragVisualActive) {
     startDragVisual();
-  } else if (stateChanged && transition && !reducedMotion.matches) {
+  } else if (stateChanged && transition && !value?.immediate && !reducedMotion.matches) {
     playPoseTransition(stateVersion);
   } else {
-    scheduleFrame(stateVersion, stateChanged);
+    scheduleFrame(stateVersion, stateChanged, value?.immediate===true);
     queuedStateTimer = setTimeout(flushQueuedState, 48);
   }
   window.whalePet.reportState({ state, message, provider: activeProvider, restarted: true, at: Math.round(performance.now()) });
+  window.whaleBuddy?.sync();
 
   if (state === "ready" && !value?.preview) {
     const readyVersion = stateVersion;
@@ -783,7 +821,7 @@ function updateConversationBubbles(value) {
     const state=STATES[item.state]?item.state:'idle';card.dataset.state=state;
     card.dataset.uncertain=String(item.uncertain===true);
     const name=document.createElement('span');name.className='conversation-name';
-    name.textContent=typeof item.title==='string'?item.title.slice(0,120):`会话 ${String(item.id||'').replace(/[^a-z0-9]/gi,'').slice(0,6).toUpperCase()}`;
+    name.textContent=typeof item.title==='string'&&item.title.trim()?item.title.slice(0,120):'未命名会话';
     name.title=name.textContent;
     const urgent=state==='needs_input'||state==='blocked';
     const label=state==='needs_input'?'等你确认':STATES[state].label;
@@ -798,6 +836,22 @@ function updateConversationBubbles(value) {
   }
 }
 
+function confirmReloadPose(id) {
+  const deadline=performance.now()+1800;
+  const check=()=>{
+    if(dragVisualActive||edgeVisualPhase){window.whalePet.reportStatusReload?.({id,state:activeState,ok:true,deferred:true});return;}
+    const layer=layers[visibleLayer];
+    const matches=STATES[activeState].frames.some(([filename])=>filename===layer.dataset.filename);
+    const visible=matches&&layer.complete&&layer.naturalWidth>0&&layer.classList.contains('is-visible')&&
+      !pet.classList.contains('has-buddy')&&!document.body.classList.contains('music-playing');
+    if(visible){window.whalePet.reportStatusReload?.({id,state:activeState,ok:true});return;}
+    if(performance.now()>=deadline){window.whalePet.reportStatusReload?.({id,state:activeState,ok:false});return;}
+    // Timers also work when the non-focusable pet is not the active window.
+    setTimeout(check,20);
+  };
+  check();
+}
+
 function applyIncomingState(value) {
   updateConversationBubbles(value);
   const state = STATES[value?.state] ? value.state : "idle";
@@ -810,14 +864,35 @@ function applyIncomingState(value) {
     providerChanged: value?.providerChanged === true
   };
   const now = performance.now();
+  if(!next.preview){reloadAction.updateState(state);if(provider!=='chatgpt')reloadAction.suspend();}
+
+  if(edgeVisualPhase){
+    // A hidden preview has no visible animation or expiry lifecycle. Do not
+    // replace the real AI state that must be restored when she jumps out.
+    if(next.preview)return;
+    lastExternalState={state:next.state,message:next.message,provider:next.provider};
+    commitState({...next,immediate:true},true);
+    if(value?.statusReloaded&&Number.isInteger(value.reloadId))confirmReloadPose(value.reloadId);
+    return;
+  }
 
   // User attention is more important than a local preview or finishing a
   // decorative transition. Dragging itself is never interrupted.
-  if(!next.preview && (value?.statusReloaded || ['needs_input','blocked'].includes(state))) {
+  const answered=activeState==='needs_input'&&state!=='needs_input';
+  if(!next.preview && (answered || value?.statusReloaded || ['needs_input','blocked'].includes(state))) {
+    if(answered||value?.statusReloaded)next.immediate=true;
+    if(value?.statusReloaded){
+      // A reload must show the actual AI pose, not a still-active keyboard,
+      // manual-game or song overlay. Saved companionship choices stay intact.
+      aiReloadHoldUntil=now+3000;clearTimeout(aiReloadHoldTimer);
+      aiReloadHoldTimer=setTimeout(()=>window.whaleBuddy?.sync(),3050);
+    }
     previewUntil=0;clearTimeout(previewTimer);clearTimeout(deferredStateTimer);
     clearTimeout(queuedStateTimer);queuedIncomingState=null;
     lastExternalState={state:next.state,message:next.message,provider:next.provider};
-    commitState(next,Boolean(value?.statusReloaded)||state!==activeState||next.providerChanged);return;
+    commitState(next,answered||Boolean(value?.statusReloaded)||state!==activeState||next.providerChanged);
+    if(value?.statusReloaded&&Number.isInteger(value.reloadId))confirmReloadPose(value.reloadId);
+    return;
   }
 
   // Never cut a character action in half. Keep only the newest request so a
@@ -929,7 +1004,7 @@ function finishPointer(event, cancelled = false) {
 }
 
 pet.addEventListener("pointerdown", (event) => {
-  if (event.button !== 0) return;
+  if (event.button !== 0 || edgeVisualPhase) return;
   if (!characterContains(event.clientX, event.clientY)) {
     scheduleMouseRelease(0);
     return;
@@ -938,6 +1013,7 @@ pet.addEventListener("pointerdown", (event) => {
   pet.setPointerCapture(event.pointerId);
   activePointerId = event.pointerId;
   pointerStart = { x: event.screenX, y: event.screenY };
+  reloadAction.suspend();
   lastPointer = { ...pointerStart };
   wasDragged = false;
   nativeDragActive = false;
@@ -993,7 +1069,7 @@ window.addEventListener("pointerup", (event) => {
 
 pet.addEventListener("contextmenu", (event) => {
   event.preventDefault();
-  if (!characterContains(event.clientX, event.clientY)) return;
+  if (edgeVisualPhase || !characterContains(event.clientX, event.clientY)) return;
   window.whalePet.openContextMenu();
 });
 
@@ -1007,11 +1083,31 @@ document.addEventListener("mouseleave", () => {
   if (!pointerStart) scheduleMouseRelease();
 });
 
+window.whalePet.onCursorProbe(value=>{
+  if(pointerStart){keepMouseInteractive();return;}
+  if(!Number.isFinite(value?.x)||!Number.isFinite(value?.y)){
+    pointerSample=null;
+    if(!mouseReleaseTimer)scheduleMouseRelease();
+    return;
+  }
+  pointerSample={x:value.x,y:value.y};
+  if(interactiveAt(value.x,value.y))keepMouseInteractive();
+  else if(!mouseReleaseTimer)scheduleMouseRelease();
+});
+
 reducedMotion.addEventListener("change", () => commitState(
   { state: activeState, message: activeMessage, provider: activeProvider },
   true
 ));
 window.whalePet.onState(applyIncomingState);
+function cancelInteraction() {
+  finishPointer(null,true);
+  if(dragVisualActive)stopDragVisual();
+  pointerSample=null;
+  cancelMouseRelease();
+  setMouseInteractive(false);
+}
+window.whalePet.onInteractionReset(cancelInteraction);
 function applyPreferences(value) {
   const imagesChanged=JSON.stringify(userPreferences.images)!==JSON.stringify(value.images||{});
   userPreferences={...userPreferences,...value};
@@ -1021,6 +1117,7 @@ function applyPreferences(value) {
   document.body.classList.toggle('hide-badge',!userPreferences.showBadge);
   document.body.classList.toggle('hide-speech',!userPreferences.showSpeech);
   badge.textContent=badgeText(dragVisualActive?'移动中':STATES[activeState].label);
+  reloadAction.sync();
   if(imagesChanged){
     alphaCache.clear();
     layers.forEach((layer,index)=>{layer.dataset.filename='';layerRequestIds[index]++;});
@@ -1052,6 +1149,11 @@ window.whalePetController = Object.freeze({
   previewDrag,
   react: playReaction,
   idleLife,
+  prepareEdge:async()=>{try{await edgeActor.decode();}catch{}return {ready:edgeActor.complete&&edgeActor.naturalWidth>0,reducedMotion:reducedMotion.matches};},
+  edgeInfo:()=>({phase:edgeVisualPhase||'normal',animated:false,traveling:edgeTraveling,source:edgeActor.getAttribute('src')}),
+  reloadInfo:()=>reloadAction.info(),
+  companionEligible:()=>reloadAction.info().phase!=='reading'&&!edgeVisualPhase&&!dragVisualActive&&!pointerStart&&!transitionInProgress&&performance.now()>=previewUntil&&performance.now()>=aiReloadHoldUntil&&
+    !['needs_input','blocked','ready'].includes(activeState)&&!document.body.classList.contains('music-playing'),
   dragPhysicsInfo:()=>({...dragPendulum.info(),active:dragVisualActive,anchorX:dragAnchorX}),
   getState: () => ({
     state: activeState,

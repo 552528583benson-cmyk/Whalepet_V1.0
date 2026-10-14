@@ -11,6 +11,7 @@
     <p class="nav-caption">让陪伴更像你</p>
     <nav aria-label="设置分类">
       <button class="nav-item active" data-tab="appearance" aria-current="page"><span>◒</span>外观与大小</button>
+      <button class="nav-item" data-tab="companion"><span>♡</span>陪伴与操作</button>
       <button class="nav-item" data-tab="poses"><span>▧</span>姿势图片</button>
       <button class="nav-item" data-tab="music"><span>♫</span>摸鱼小曲</button>
       <button class="nav-item" data-tab="connections"><span>⌘</span>AI 接入</button>
@@ -27,8 +28,38 @@
           <div class="card"><label class="toggle-row"><span><strong>状态标签</strong><small>显示 AI 名称与当前动作</small></span><input type="checkbox" id="showBadge" role="switch" checked></label><label class="toggle-row"><span><strong>对话气泡</strong><small>显示工作提示和小鲸的回应</small></span><input type="checkbox" id="showSpeech" role="switch" checked></label></div>
           <div class="card"><div class="card-title"><h2>任务泡泡微调</h2><button class="quiet-button" id="resetBubbles">只还原泡泡</button></div><fieldset id="bubbleControls"><label class="adjust-label" for="bubbleScale">相对大小 <output id="bubbleScaleValue" for="bubbleScale">100%</output></label><input type="range" id="bubbleScale" min="80" max="120" step="1" value="100"><div class="range-labels"><span>更小 80%</span><span>更清晰 120%</span></div><label class="adjust-label" for="bubbleOffset">上下位置 <output id="bubbleOffsetValue" for="bubbleOffset">默认</output></label><input type="range" id="bubbleOffset" min="-20" max="30" step="1" value="0"><div class="range-labels"><span>向上 · 远一点</span><span>向下 · 近一点</span></div></fieldset><p class="hint">仍随小鲸同比缩放，在此基础上微调；只影响上方任务泡泡。关闭气泡时保留这些设置。较大泡泡向下移动时，请留意是否挡住头顶。</p></div>
           <div class="card"><label class="toggle-row"><span><strong>待机微动作</strong><small>轻轻眨眼、摆尾；仅默认待机图生效<br>85% 及以下暂停浮动与摆尾，减少闪烁<br>遵循系统“减少动态效果”设置</small></span><input type="checkbox" id="idleLife" role="switch" checked></label></div>
-          <p class="shortcut-hint">找不到小鲸？按 <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>W</kbd><br>就能把她带回屏幕角落。</p>
+          <p class="shortcut-hint">找不到小鲸？<br>她可能藏在屏幕下沿。点呆毛探头，右键“找回小鲸”回到身边。</p>
         </div>
+      </div>
+    </section>
+    <section id="companion" class="page" hidden>
+      <header><p class="eyebrow">ALWAYS NEAR, ALWAYS HERE</p><h1>在身边，随时能摸摸。</h1><p>点击逗逗她，拖动带她换个位置。要专心时，可以暂时隐藏她。</p></header>
+      <div class="card companion-card buddy-card">
+        <div class="card-title"><h2>陪你做事</h2><span class="companion-pill" id="buddyStatus" role="status" aria-live="polite">陪伴互动尚未开启</span></div>
+        <label class="toggle-row"><span><strong>你敲键盘，她也敲小键盘</strong><small>开启后，感知电脑上的键盘活动，跟着你轻轻敲几下。</small></span><input type="checkbox" id="typingCompanion" role="switch" aria-describedby="buddyPrivacy"></label>
+        <div class="buddy-actions"><button id="demoTypingBuddy">看看她敲键盘</button></div>
+        <p class="hint" id="buddyPrivacy">默认关闭，只观察“有没有键盘活动”，不读取你输入的文字、按键内容或密码；不需要管理员权限，不联网，也不保存活动记录。隐藏小鲸时停止检测。</p>
+        <p class="hint buddy-priority">需要你回答或遇到问题时，AI 提醒优先；拖动、唱歌也不会被打断。任务泡泡仍显示真实的 AI 状态。</p>
+        <p class="hint buddy-warning" id="buddyMonitorWarning" role="alert" hidden></p>
+      </div>
+      <div class="card companion-card buddy-card">
+        <h2>你玩游戏，她也一起玩</h2>
+        <label class="toggle-row buddy-game-toggle"><span><strong>跟随我选的游戏</strong><small>只有选中的游戏在前台时，才切换到小鲸的游戏姿势。</small></span><input type="checkbox" id="gameCompanion" role="switch" aria-describedby="gameDetectionHint"></label>
+        <div class="buddy-actions"><button class="primary" id="addGame">选择游戏的 .exe</button></div>
+        <ul id="gameList" class="buddy-game-list" aria-label="已选择的游戏"></ul>
+        <p class="hint" id="gameDetectionHint">选择文件只登记程序名，不启动游戏；同名程序会一起匹配。不把普通全屏窗口猜成游戏，独占全屏游戏可能盖住桌宠。随时可移除，自动陪玩默认关闭。</p>
+        <label class="toggle-row buddy-manual"><span><strong>现在一起玩 · 手动陪玩</strong><small>不检测程序，立即试试游戏姿势。只是本次开关，重启后关闭。</small></span><input type="checkbox" id="manualGaming" role="switch"></label>
+      </div>
+      <div class="card companion-card">
+        <div class="card-title"><h2>小鲸现在在哪里？</h2><span class="companion-pill" id="companionStatus" role="status" aria-live="polite">正在确认…</span></div>
+        <div class="companion-actions"><button class="primary" id="toggleCompanion">显示小鲸</button><button id="recoverCompanion">带回屏幕角落</button></div>
+        <p class="hint">隐藏时她会跑到当前屏幕下沿，只露呆毛；点呆毛探头，再点脑袋缩回。右键选择“找回小鲸”或点击上方“显示小鲸”，她会跳回原来的位置。躲着不显示 AI 信息，探头时仅显示任务泡泡。正常显示时，“带回屏幕角落”可帮她换个位置，不改变大小、图片或 AI 接入。</p>
+      </div>
+      <div class="card companion-card">
+        <h2>随时找回她</h2>
+        <p class="hint" id="companionTrayHint"></p>
+        <ul class="companion-shortcuts" id="companionShortcuts" aria-label="快捷键实际可用情况"></ul>
+        <p class="hint">快捷键被其他程序占用时，上方按钮仍然可用。重新显示不会抢走当前窗口的键盘焦点。</p>
       </div>
     </section>
     <section id="music" class="page" hidden>
@@ -61,7 +92,7 @@
         <label class="toggle-row" id="followRow"><span><strong>自动跟随本机 Codex</strong><small>读取新增任务事件，不读取登录凭据</small></span><input type="checkbox" id="autoFollow" role="switch"></label>
         <div id="customNameRow" hidden><label class="field-label" for="customLabel">桌面标签名称</label><div class="input-action"><input id="customLabel" maxlength="20" placeholder="例如：Claude"><button id="saveName">保存名称</button></div><p class="hint">名称只用于显示；需要下方的适配代码发送实际状态。</p></div>
       </div>
-      <div class="card live-card"><div><span class="live-dot" id="liveDot"></span><strong id="connectionStatus">正在读取状态…</strong><p id="connectionDetail" class="hint"></p><p class="hint">姿势卡住时，可重新读取本地任务日志；不重启小鲸，不修改对话或外观。日志仍在等待回答时会保留提醒。</p><button id="reloadCodex" class="quiet-button">重新读取 Codex 状态</button></div><button id="refresh" class="quiet-button">更新显示</button></div>
+      <div class="card live-card"><div><span class="live-dot" id="liveDot"></span><strong id="connectionStatus">正在读取状态…</strong><p id="connectionDetail" class="hint"></p><p class="hint">姿势卡住时，可重新读取本地任务日志；小鲸会左右确认，同步后轻轻点头。不重启、不修改对话或外观；日志仍等待回答时会保留提醒，未记录的状态无法恢复。</p><button id="reloadCodex" class="quiet-button">重新读取 Codex 状态</button></div><button id="refresh" class="quiet-button">更新显示</button></div>
       <details class="card integration-guide" id="integrationGuide"><summary>通用接入指南 <span>本地接口 · 无需 API 密钥</span></summary><p>在你的 AI 工具或脚本中，开始思考、调用工具和完成时发送相应状态。仅修改名称或打开网页不会自动接入。</p><div class="endpoint"><span>UDP · 仅本机</span><code id="endpoint"></code></div><div class="code-heading"><h3>Python 最小示例</h3><button id="copyPython" class="quiet-button">复制代码</button></div><pre id="pythonExample" tabindex="0"></pre><p class="hint">此示例仅发送一次“思考”。真正自动跟随需要在 AI 的事件回调中发送状态；消息不包含提示词或回复正文。</p><div class="code-heading"><h3>支持的状态</h3><button id="copyPacket" class="quiet-button">复制 JSON 消息</button></div><code id="stateNames" class="state-names"></code><p class="hint">也可由本机程序更新这个 JSON 状态文件：</p><code id="stateFile" class="file-path"></code></details>
     </section>
     <footer><span id="saveStatus" role="status" aria-live="polite">更改后自动保存</span><span>保留原作 · 随时还原</span></footer>

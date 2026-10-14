@@ -15,6 +15,7 @@ try{
   if($entry.FullName.EndsWith('/')){continue}
   $relative=$entry.FullName.Substring($release.Length+1)
   if($relative -match '(^|/)(runtime|node_modules|work|backups|raw|qa|sessions|auth\.json)(/|$)'){throw "Private/development file: $relative"}
+  if($relative -match '(^|/)(preferences|window-state|settings|state(?:-(?:chatgpt|deepseek|custom))?)\.json$'){throw "Personal runtime preferences/state: $relative"}
   if($relative -match '\.(mp3|m4a|wav|ogg|jsonl|onnx)$'){throw "Private media/model/transcript: $relative"}
   $source=Join-Path $stage $relative
   $stream=$entry.Open();$sha=[Security.Cryptography.SHA256]::Create()
@@ -38,6 +39,15 @@ if($shortcut.TargetPath -ne (Join-Path $installed 'electron.exe')){throw 'Shortc
 if($shortcut.IconLocation -notlike '*WhalePet.ico,0'){throw 'Shortcut icon invalid'}
 Write-Output 'Extracted ZIP installer and desktop shortcut passed (isolated test directory).'
 $env:WHALEPET_PACKAGE_APP=Join-Path $installed 'resources\app'
+if(-not (Test-Path -LiteralPath (Join-Path $env:WHALEPET_PACKAGE_APP 'ahoge-pull-assets.js') -PathType Leaf)){throw 'Ahoge pull asset metadata missing'}
+# Companion/recovery source and assets are required, but personal game selections are never
+# required for installation or the smoke test.
+foreach($file in 'reload-action.js','buddy-motion.js','buddy-renderer.js','buddy-policy.js','user-activity.js','native\user-activity.ps1','assets\whalepet-buddy\typing-v1.png','assets\whalepet-buddy\gaming-v1.png','assets\whalepet-buddy\PROMPTS.md','assets\whalepet-v015\WhalePet.ico','recovery-window.js','recovery-preload.js','recovery.html','recovery.js','recovery.css','edge-travel-window.js','edge-travel-preload.js','edge-travel.html','edge-travel.js','edge-travel.css','drag-physics.js','assets\generated-transitions\ahoge-pull\open.png','assets\generated-transitions\ahoge-pull\smile.png'){
+ if(-not (Test-Path -LiteralPath (Join-Path $env:WHALEPET_PACKAGE_APP $file) -PathType Leaf)){throw "Companion/recovery runtime file missing: $file"}
+}
+foreach($file in 'ahoge-pull-assets.js','drag-physics.js','assets\generated-transitions\ahoge-pull\open.png','assets\generated-transitions\ahoge-pull\smile.png'){
+ if((Get-FileHash -LiteralPath (Join-Path $env:WHALEPET_PACKAGE_APP $file)).Hash -ne (Get-FileHash -LiteralPath (Join-Path $projectRoot $file)).Hash){throw "Ahoge pull runtime differs from reviewed source: $file"}
+}
 # A packaged Electron with resources/app ignores a test-script argument. Use the
 # development runner (byte-identical Electron engine) to load the installed app.
 if((Get-FileHash -LiteralPath (Join-Path $installed 'electron.exe')).Hash -ne (Get-FileHash -LiteralPath (Join-Path $projectRoot 'node_modules\electron\dist\electron.exe')).Hash){throw 'Electron engine mismatch'}

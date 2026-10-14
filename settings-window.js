@@ -38,6 +38,26 @@ function createSettingsController(api) {
   };
   ipcMain.handle('settings:get',safe(()=>api.snapshot()));
   ipcMain.handle('settings:reload-codex',safe(()=>api.reloadCodex()));
+  ipcMain.handle('settings:companion',safe(action=>api.companion(action)));
+  ipcMain.handle('settings:game-mode',safe(enabled=>{
+    if(typeof enabled!=='boolean')throw new Error('陪玩开关格式无效');
+    return api.gameMode(enabled);
+  }));
+  ipcMain.handle('settings:preview-buddy',safe(mode=>{
+    if(mode!=='typing')throw new Error('未知的陪伴演示');
+    return api.previewBuddy();
+  }));
+  ipcMain.handle('settings:add-game',safe(async()=>{
+    const pick=await dialog.showOpenDialog(window,{title:'选择要一起玩的游戏程序（不会启动它）',properties:['openFile'],filters:[{name:'游戏程序',extensions:['exe']}]});
+    if(pick.canceled)return {cancelled:true};
+    const file=pick.filePaths[0];
+    if(path.extname(file).toLowerCase()!=='.exe')throw new Error('请选择实际游戏的 .exe 文件，而不是桌面快捷方式或启动器。');
+    return api.addGame(path.basename(file));
+  }));
+  ipcMain.handle('settings:remove-game',safe(name=>{
+    if(typeof name!=='string')throw new Error('游戏名称格式无效');
+    return api.removeGame(name);
+  }));
   ipcMain.handle('settings:song-import',safe(async()=>{
     const pick=await dialog.showOpenDialog(window,{title:'选择小鲸的摸鱼小曲',properties:['openFile'],filters:[{name:'本地音频 / LetMeGo 源文件',extensions:['mp3','wav','m4a','ogg','html','htm']}]});
     if(pick.canceled)return {cancelled:true};

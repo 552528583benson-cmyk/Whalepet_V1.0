@@ -1,7 +1,5 @@
 # GitHub implementation references
 
-Publication note: this lightweight repository does not include the private development workspace's `references/` snapshots or historical asset-processing tools mentioned below. The current release bundles only the original WhalePet runtime artwork. Reference notices are retained for provenance.
-
 WhalePet remains a standalone Electron desktop application. No referenced plugin is installed into the user's DeepSeek Harness profile, and no third-party character artwork was copied into the active design asset set.
 
 The following MIT-licensed repositories were reviewed on 2026-08-21:

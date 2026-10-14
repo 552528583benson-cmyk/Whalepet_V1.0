@@ -2,10 +2,10 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const dgram=require('node:dgram');
-const {app,BrowserWindow,dialog}=require('electron');
+const {app,BrowserWindow,dialog,globalShortcut,screen}=require('electron');
 const root=path.resolve(__dirname,'..');
 const run=fs.mkdtempSync(path.join(root,'work/settings-test-'));
-const shots=path.join(root,'work/settings-qa');fs.mkdirSync(shots,{recursive:true});
+const shots=path.join(run,'screenshots');fs.mkdirSync(shots,{recursive:true});
 process.env.WHALEPET_RUNTIME_DIR=path.join(run,'runtime');
 process.env.WHALEPET_QA_ALLOW_SECOND_INSTANCE='1';
 process.env.WHALEPET_QA_HIDDEN='1';
@@ -14,6 +14,16 @@ process.env.WHALEPET_DISABLE_AUTO_FOLLOW='1';
 process.env.WHALEPET_BRIDGE_PORT=String(49000+process.pid%1000);
 app.setPath('userData',path.join(run,'electron'));
 app.setAppPath(root);
+// Isolated QA never registers desktop shortcuts, samples the real cursor, or
+// leaves an invisible window intercepting clicks over the user's applications.
+globalShortcut.register=()=>false;
+app.whenReady().then(()=>{screen.getCursorScreenPoint=()=>({x:-1000000,y:-1000000});});
+app.on('browser-window-created',(_event,window)=>{
+  window.setOpacity(0);window.setSkipTaskbar(true);window.setFocusable(false);window.webContents.setAudioMuted(true);
+  const nativeIgnore=window.setIgnoreMouseEvents.bind(window);
+  window.setIgnoreMouseEvents=()=>nativeIgnore(true,{forward:true});window.setIgnoreMouseEvents(true,{forward:true});
+});
+require('../user-activity').createUserActivity=()=>({start:()=>false,stop(){},dispose(){},getStatus:()=>({state:'stopped',reason:null,available:false})});
 const {writePreferences,readPreferences,normalizePreferences}=require('../preferences');
 writePreferences(path.join(run,'runtime/preferences.json'),{scale:.85});
 assert.equal(normalizePreferences({scale:30}).scale,1.5);
@@ -24,7 +34,7 @@ const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function eventually(fn){let last;for(let i=0;i<50;i++){try{return await fn();}catch(e){last=e;await pause(150);}}throw last;}
 app.whenReady().then(async()=>{
   const settings=await eventually(async()=>{const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('settings.html'));assert.ok(w);assert.equal(await w.webContents.executeJavaScript('Boolean(document.querySelector("#poseGrid")?.children.length)'),true);return w;});
-  const pet=BrowserWindow.getAllWindows().find(w=>w!==settings);
+  const pet=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('index.html'));
   const invoke=expression=>settings.webContents.executeJavaScript(expression);
   const good=async expression=>{const result=await invoke(expression);assert.equal(result.ok,true,result.error);return result.value;};
   if(process.env.WHALEPET_PROVIDER_LOCK==='deepseek'){

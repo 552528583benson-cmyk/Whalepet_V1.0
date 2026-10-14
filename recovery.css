@@ -1,0 +1,30 @@
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;user-select:none}
+body{--curl-reveal:66.6015625px;font:12px/1.35 'Microsoft YaHei UI','Segoe UI',sans-serif;color:#294779}
+[hidden]{display:none!important}
+#restorePet{position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;outline:0;overflow:hidden;background:transparent;cursor:pointer;touch-action:none;-webkit-tap-highlight-color:transparent}
+#restorePet img{position:absolute;left:50%;width:275px;height:275px;max-width:none;pointer-events:none;transform:translateX(-50%);object-fit:fill}
+/* The intact illustration supplies both crops. The chin is the last visible row. */
+#headArt{top:calc(100% - var(--curl-reveal));opacity:0;clip-path:inset(0 0 41.328125% 0);transition:top 380ms cubic-bezier(.2,.8,.2,1),opacity 120ms ease}
+/* Follow the blue loop, excluding the white headband directly behind it.
+   The screen floor cuts source row 310: both tapered roots stay below it,
+   instead of exposing the disconnected dark fragments around row 347. */
+#curlArt{top:calc(100% - var(--curl-reveal));opacity:1;clip-path:polygon(37.5% 26.953125%,37.5% 21.875%,40.234375% 18.984375%,43.4375% 17.5%,46.953125% 16.484375%,50.15625% 17.03125%,52.5% 19.21875%,52.890625% 21.875%,51.40625% 25%,48.75% 27.734375%,49.0625% 26.640625%,50.625% 23.90625%,50.78125% 21.875%,50% 20.390625%,48.4375% 19.765625%,46.09375% 19.375%,43.828125% 20%,42.34375% 20.9375%,41.171875% 22.265625%,40.625% 23.828125%,40.46875% 25.46875%,40.78125% 26.25%,39.6875% 26.5625%);transition:opacity 160ms ease}
+body[data-stage="peeking"] #headArt{top:calc(100% - 161.34765625px);opacity:1}
+body[data-stage="peeking"] #curlArt{opacity:0}
+/* Keep the capture surface alive while the upright travel sprite is pulled out. */
+body[data-pulling="true"] #restorePet{cursor:grabbing}
+body[data-pulling="true"] #restorePet img,body[data-pulling="true"] #conversationBubbles{visibility:hidden}
+#restorePet:focus-visible{filter:drop-shadow(0 0 3px #a8bfff)}
+#conversationBubbles{position:absolute;z-index:1;left:40px;bottom:146px;width:220px;display:flex;flex-direction:column;gap:7px;pointer-events:none;animation:bubbles-appear 220ms ease both}
+.conversation-bubble{position:relative;min-width:0;padding:7px 11px;border:1px solid #bacbf0;border-radius:15px;background:#f8fbfff2;box-shadow:0 2px 8px #12345720}
+.conversation-bubble:last-of-type::after{content:"";position:absolute;left:90px;bottom:-6px;width:10px;height:10px;border-right:1px solid #bacbf0;border-bottom:1px solid #bacbf0;background:#f8fbff;transform:rotate(45deg)}
+.conversation-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#697a98;font-size:10px}
+.conversation-bubble strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600}
+.conversation-bubble[data-state="needs_input"]{border-color:#d5b16e;background:#fffaf0f5}
+.conversation-bubble[data-state="blocked"]{border-color:#d8a1a4;background:#fff5f5f5}
+.conversation-bubble[data-state="ready"] strong{color:#39856b}
+.conversation-bubble[data-uncertain="true"] .conversation-name{color:#918172}
+.conversation-overflow{align-self:center;padding:2px 7px;border:1px solid #ccd7ec;border-radius:10px;background:#f5f8fff0;color:#667894;font-size:10px}
+@keyframes bubbles-appear{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){#restorePet img{transition:none}#conversationBubbles{animation:none}}

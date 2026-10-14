@@ -25,7 +25,7 @@
         <div class="operation-effect thought-effect" aria-hidden="true">
           <span></span><span></span><span></span>
         </div>
-        <div class="motion-layer">
+        <div id="reloadMotion" class="reload-motion"><div class="motion-layer">
           <img
             id="characterA"
             class="character-layer is-visible"
@@ -40,14 +40,28 @@
             alt=""
             draggable="false"
           >
-        </div>
+        </div></div>
       </div>
+      <section id="reloadFeedback" class="reload-feedback" role="status" aria-live="polite" hidden>
+        <svg class="reload-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <g class="reload-reading-icon"><path d="M19 8a8 8 0 1 0 1 7M19 3v5h-5"/></g>
+          <path class="reload-synced-icon" d="m5 12 4 4 10-10"/>
+          <g class="reload-failed-icon"><path d="m7 7 10 10M17 7 7 17"/></g>
+        </svg>
+        <span id="reloadLabel"></span>
+      </section>
       <div id="stateBadge" class="state-badge">GPT · 待机</div>
     </main>
+    <div id="edgeClip" class="edge-clip" aria-hidden="true" hidden>
+      <img id="edgeActor" src="assets/whalepet-hd/idle.png" alt="" draggable="false">
+    </div>
     <script src="idle-life.js"></script>
     <script src="drag-physics.js"></script>
+    <script src="reload-action.js"></script>
     <script src="music-dance.js"></script>
     <script src="pet.js"></script>
     <script src="idle-song-player.js"></script>
+    <script src="buddy-motion.js"></script>
+    <script src="buddy-renderer.js"></script>
   </body>
 </html>

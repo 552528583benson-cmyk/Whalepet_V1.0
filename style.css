@@ -47,6 +47,12 @@ body {
   cursor: grabbing;
 }
 
+/* An intact bitmap supplies the escape actor. No AI labels or anatomy swaps. */
+.edge-active #pet {visibility:hidden;pointer-events:none}
+.edge-clip {position:absolute;left:0;top:0;width:100%;height:493px;overflow:hidden;pointer-events:none}
+.edge-clip[hidden] {display:none}
+#edgeActor {position:absolute;left:142.5px;top:225px;width:275px;height:275px;pointer-events:none;transform-origin:50% 97%;will-change:transform,opacity}
+
 /* Stable transparent drawing surface. Never resize/rebase it per drag: Windows
    can retain stale composited pixels during rapid transparent-window resizing. */
 .drag-room .pet {
@@ -72,6 +78,20 @@ body {
   transform-origin: 50% 88%;
   will-change: transform;
 }
+
+/* A separate wrapper keeps this local feedback out of pose/drag transforms. */
+.reload-motion {position:absolute;inset:0;will-change:transform}
+.reload-feedback {position:absolute;left:50%;top:50px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;max-width:240px;padding:5px 10px;border:1px solid #aac5f5;border-radius:14px;background:#f6fafff5;color:#315b99;font:11px/1.4 'Microsoft YaHei UI','Segoe UI',sans-serif;white-space:nowrap;z-index:6;pointer-events:none;box-shadow:0 2px 6px #12375a18}
+.reload-feedback[hidden],.hide-speech .reload-feedback,.pet.is-dragging .reload-feedback {display:none}
+.reload-icon {width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.reload-synced-icon,.reload-failed-icon {display:none}
+.reload-feedback[data-phase="reading"] .reload-icon {animation:reload-scan 1.3s linear infinite}
+.reload-feedback[data-phase="synced"] {color:#28745f;border-color:#97cbb9;background:#f1fff9f5}
+.reload-feedback[data-phase="synced"] .reload-reading-icon,.reload-feedback[data-phase="failed"] .reload-reading-icon {display:none}
+.reload-feedback[data-phase="synced"] .reload-synced-icon,.reload-feedback[data-phase="failed"] .reload-failed-icon {display:block}
+.reload-feedback[data-phase="failed"] {color:#9d4c50;border-color:#d7adb1;background:#fff5f5f5}
+@keyframes reload-scan {to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.reload-feedback .reload-icon{animation:none!important}}
 
 .operation-effect {
   position: absolute;
@@ -464,3 +484,14 @@ body {
 .conversation-bubble[data-state="blocked"] { border-color:#ec969d; background:#fff0f2; color:#a63848; }
 .conversation-bubble[data-state="ready"] { border-color:#78c7b0; background:#effcf6; color:#237658; }
 .pet.is-dragging .conversation-bubbles { visibility:hidden; }
+
+/* Companion hands move locally at master resolution. The entire image stays
+   anchored even at 65–85%, rather than repeatedly minifying a body transform. */
+.buddy-canvas, .buddy-reference {position:absolute;width:245px;height:245px;left:0;right:0;bottom:-5px;margin:auto;pointer-events:none;z-index:3;}
+.buddy-canvas {filter:drop-shadow(0 2px 2px rgba(12,24,58,.16));}
+.buddy-reference {object-fit:contain;object-position:center bottom;visibility:hidden;}
+.buddy-canvas[hidden], .buddy-reference[hidden], .buddy-source[hidden], .buddy-badge[hidden] {display:none;}
+.pet.has-buddy:not(.is-dragging) .stage {animation:none!important;transform:none;}
+.pet.has-buddy .character-layer, .pet.has-buddy .idle-life, .pet.has-buddy .operation-effect {visibility:hidden;}
+.pet.has-buddy #stateBadge {visibility:hidden;}
+.music-playing .buddy-canvas, .music-playing .buddy-badge, .pet.is-dragging .buddy-canvas, .pet.is-dragging .buddy-badge {display:none;}

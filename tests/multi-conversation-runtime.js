@@ -14,7 +14,8 @@ let aiIdleProbe;
 songModule.createIdleSongController=options=>{aiIdleProbe=options.isAiIdle;return createSong(options);};
 const emit=(id,type,payload)=>fs.appendFileSync(path.join(sessions,`rollout-${id}.jsonl`),JSON.stringify({timestamp:new Date(clock()).toISOString(),type,payload})+'\n');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-async function eventually(fn){let last;for(let i=0;i<70;i++)try{return await fn();}catch(e){last=e;await pause(100);}throw last;}
+// New log files are discovered every 10 seconds, so allow a complete scan cycle.
+async function eventually(fn){let last;for(let i=0;i<120;i++)try{return await fn();}catch(e){last=e;await pause(100);}throw last;}
 require('../main');
 app.whenReady().then(async()=>{
   const pet=await eventually(()=>{const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().endsWith('index.html'));assert.ok(w);return w;});
@@ -37,9 +38,18 @@ app.whenReady().then(async()=>{
   await eventually(async()=>assert.equal(await state(),'needs_input'));
   assert.deepEqual((await bubbles()).map(x=>x.state).sort(),['generating','needs_input']);
   assert.equal((await bubbles()).find(x=>x.state==='needs_input').title,'小鲸鱼 · 等待你的选择');
+  const worker='00000005-5555-5555-5555-555555555555';
+  const {DatabaseSync}=require('node:sqlite'),metadata=new DatabaseSync(path.join(run,'state_5.sqlite'));
+  metadata.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, source TEXT)');
+  metadata.prepare('INSERT INTO threads VALUES (?,?,?)').run(b,'游戏 Demo · 生成新场景','cli');
+  metadata.prepare('INSERT INTO threads VALUES (?,?,?)').run(worker,null,JSON.stringify({subagent:{thread_spawn:{parent_thread_id:b}}}));metadata.close();
+  emit(worker,'response_item',{type:'function_call',name:'read_file'});
   await ui("tab('connections');document.querySelector('#reloadCodex').click()");
   await eventually(async()=>assert.match(await ui('document.querySelector("#toast").textContent'),/已重新读取/));
   assert.equal(await state(),'needs_input','real waiting state survives manual reload');
+  assert.equal((await bubbles()).length,2,'background worker does not add a coded conversation bubble');
+  assert.ok((await bubbles()).every(c=>!/^会话 [A-F0-9]+$/.test(c.title)));
+  emit(worker,'event_msg',{type:'turn_aborted'});
   // A bridge report from another task must not overwrite the waiting request.
   const bridge=state=>new Promise(resolve=>{const s=require('node:dgram').createSocket('udp4');s.send(Buffer.from(JSON.stringify({type:'whalepet-state',provider:'chatgpt',state,message:'ordinary task',nonce:'fixture'})),Number(process.env.WHALEPET_BRIDGE_PORT),'127.0.0.1',()=>{s.close();resolve();});});
   await bridge('ready');await pause(700);assert.equal(await state(),'needs_input');
@@ -74,8 +84,9 @@ app.whenReady().then(async()=>{
   await ui('petSettings.save({showSpeech:false})');
   assert.equal(await js('getComputedStyle(document.querySelector("#conversationBubbles")).display'),'none');
   await ui('petSettings.save({showSpeech:true})');
-  emit(a,'event_msg',{type:'user_message'});
+  emit(a,'event_msg',{type:'item_completed',item:{type:'UserMessage',content:[{type:'text',text:'<send_user_message_question_reply>'+JSON.stringify([{questionItemId:JSON.stringify(['request_user_input_async','ask-1',0]),answer:'fixture'}])+'</send_user_message_question_reply>'}]}});
   await eventually(async()=>assert.notEqual(await state(),'needs_input'));
+  assert.equal(await js('whalePetController.transitionInfo().inProgress'),false,'answered question bypasses decorative transition');
   emit(b,'event_msg',{type:'turn_failed'});await eventually(async()=>assert.equal(await state(),'blocked'));
   await bridge('working');await pause(600);assert.equal(await state(),'blocked');
   emit(b,'event_msg',{type:'task_started'});await eventually(async()=>assert.notEqual(await state(),'blocked'));
@@ -131,7 +142,7 @@ app.whenReady().then(async()=>{
   await eventually(async()=>assert.equal((await bubbles())[0]?.state,'ready'));
   await eventually(async()=>assert.equal((await bubbles()).length,0));
   await eventually(()=>assert.equal(aiIdleProbe(),true,'only confirmed completion and idle rendering permit idle music'));
-  console.log('PASS: compact 75/100/150% proportional layout, 3/4-task overflow, stale task indicator and real main-process AI-idle music gate.');
+  console.log('PASS: actual conversation names, worker grouping, compact scaling, overflow, stale indicator and AI-idle music gate.');
   console.log('PASS: working -> green completion -> disappear; pet celebrates secondary completion then resumes remaining work; all idle hides bubbles; urgent state preempts celebration.');
   console.log('PASS: real two-session logs -> urgent posture + two titled bubbles; secondary updates, async waiting, bridge priority, answers, error recovery, 75/100/150% layout, hide/disable/re-enable. Artifacts: '+run);app.quit();
 }).catch(e=>{console.error(e);app.exit(1);});setTimeout(()=>app.exit(1),90000).unref();

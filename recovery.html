@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'">
+  <title>小鲸躲在屏幕边缘</title>
+  <link rel="stylesheet" href="recovery.css">
+</head>
+<body data-stage="hidden">
+  <section id="conversationBubbles" aria-label="任务状态" aria-live="polite" hidden></section>
+  <button id="restorePet" type="button" aria-label="轻轻点呆毛，让小鲸探出头">
+    <img id="headArt" src="assets/whalepet-hd/idle.png" alt="" draggable="false">
+    <img id="curlArt" src="assets/whalepet-hd/idle.png" alt="" draggable="false">
+  </button>
+  <script src="recovery.js"></script>
+</body>
+</html>
